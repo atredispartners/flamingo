@@ -8,8 +8,8 @@ import (
 )
 
 var ToolName = "flamingo"
-var Version = "0.0.2"
-var BuildDate = "2020-01-20"
+var Version = "0.0.3"
+var BuildDate = "2020-01-21"
 
 type flamingoParameters struct {
 	Verbose        bool
