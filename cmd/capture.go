@@ -251,6 +251,14 @@ func setupSSH(rw *flamingo.RecordWriter) {
 		sshHostKey = string(data)
 	}
 
+	if params.SSHHostKey == "" {
+		pkey, err := flamingo.SSHGenerateRSAKey(2048)
+		if err != nil {
+			log.Fatalf("failed to create ssh host key: %s", err)
+		}
+		sshHostKey = string(pkey)
+	}
+
 	// Create a listener for each port
 	sshPorts, err := flamingo.CrackPorts(params.SSHPorts)
 	if err != nil {

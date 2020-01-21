@@ -2,7 +2,7 @@
 
 A filter-feeding bird. Captures credentials sprayed across the network by various IT and security products.
 
-Currently supports SSH and SNMP credential collection.
+Currently supports SSH, LDAP, and SNMP credential collection.
 
 ## Usage
 

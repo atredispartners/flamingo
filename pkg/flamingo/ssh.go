@@ -91,11 +91,7 @@ func getSSHHandlePublic(c *ConfSSH) func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.
 func SpawnSSH(c *ConfSSH) error {
 
 	if c.PrivateKey == "" {
-		pkey, err := sshGenerateRSAKey(2048)
-		if err != nil {
-			return fmt.Errorf("failed to generate private key: %q", err)
-		}
-		c.PrivateKey = string(pkey)
+		return fmt.Errorf("no host key has been set")
 	}
 
 	// Configure the ssh server
@@ -153,7 +149,8 @@ func sshHandleConn(tcpConn net.Conn, c *ConfSSH) {
 	defer sshConn.Close()
 }
 
-func sshGenerateRSAKey(bits int) ([]byte, error) {
+// SSHGenerateRSAKey generates a new SSH host key
+func SSHGenerateRSAKey(bits int) ([]byte, error) {
 	pkey, err := rsa.GenerateKey(rand.Reader, bits)
 	if err != nil {
 		return nil, err
