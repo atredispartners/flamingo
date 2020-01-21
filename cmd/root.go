@@ -19,6 +19,9 @@ type flamingoParameters struct {
 	SSHHostKey     string
 	LDAPPorts      string
 	LDAPSPorts     string
+	HTTPPorts      string
+	HTTPSPorts     string
+	HTTPBasicRealm string
 	TLSCertFile    string
 	TLSCertData    string
 	TLSKeyFile     string
@@ -54,7 +57,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&params.Verbose, "verbose", "v", false, "Display verbose output")
 	rootCmd.PersistentFlags().BoolVarP(&params.IgnoreFailures, "ignore", "I", false, "Ignore individual listener failures")
 
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap", "Specify a comma-separated list of protocols")
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -66,6 +69,11 @@ func init() {
 	// LDAP(S) parameters
 	rootCmd.Flags().StringVarP(&params.LDAPPorts, "ldap-ports", "", "389", "The list of TCP ports to listen on for LDAP")
 	rootCmd.Flags().StringVarP(&params.LDAPSPorts, "ldaps-ports", "", "636", "The list of TCP ports to listen on for LDAPS")
+
+	// HTTP(S) parameters
+	rootCmd.Flags().StringVarP(&params.HTTPPorts, "http-ports", "", "80", "The list of TCP ports to listen on for HTTP")
+	rootCmd.Flags().StringVarP(&params.HTTPSPorts, "https-ports", "", "443", "The list of TCP ports to listen on for HTTPS")
+	rootCmd.Flags().StringVarP(&params.HTTPBasicRealm, "http-realm", "", "Administration", "The authentication realm to present")
 
 	rootCmd.Flags().StringVarP(&params.TLSCertFile, "tls-cert", "", "", "An optional x509 certificate for TLS listeners")
 	rootCmd.Flags().StringVarP(&params.TLSKeyFile, "tls-key", "", "", "An optional x509 key for TLS listeners")

@@ -96,6 +96,12 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupLDAPS(rw)
 	}
 
+	// LDAP/LDAPS
+	if _, enabled := protocols["http"]; enabled {
+		setupHTTP(rw)
+		setupHTTPS(rw)
+	}
+
 	// Make sure at least one capture is running
 	if protocolCount == 0 {
 		log.Fatalf("at least one protocol must be enabled")
@@ -362,6 +368,64 @@ func setupLDAPS(rw *flamingo.RecordWriter) {
 		}
 		protocolCount++
 		cleanupHandlers = append(cleanupHandlers, func() { ldapConf.Shutdown() })
+	}
+}
+
+func setupHTTP(rw *flamingo.RecordWriter) {
+
+	// Create a listener for each port
+	httpPorts, err := flamingo.CrackPorts(params.HTTPPorts)
+	if err != nil {
+		log.Fatalf("failed to process ldap ports %s: %s", params.HTTPPorts, err)
+	}
+
+	for _, port := range httpPorts {
+		port := port
+		httpConf := flamingo.NewConfHTTP()
+		httpConf.BindPort = uint16(port)
+		httpConf.RecordWriter = rw
+		httpConf.BasicRealm = params.HTTPBasicRealm
+		if err := flamingo.SpawnHTTP(httpConf); err != nil {
+			if !params.IgnoreFailures {
+				log.Fatalf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { httpConf.Shutdown() })
+	}
+}
+
+func setupHTTPS(rw *flamingo.RecordWriter) {
+
+	// Create a listener for each port
+	httpsPorts, err := flamingo.CrackPorts(params.HTTPSPorts)
+	if err != nil {
+		log.Fatalf("failed to process ldap ports %s: %s", params.HTTPSPorts, err)
+	}
+
+	for _, port := range httpsPorts {
+		port := port
+		httpConf := flamingo.NewConfHTTP()
+		httpConf.BindPort = uint16(port)
+		httpConf.RecordWriter = rw
+		httpConf.BasicRealm = params.HTTPBasicRealm
+		httpConf.TLS = true
+		httpConf.TLSCert = params.TLSCertData
+		httpConf.TLSKey = params.TLSKeyData
+		httpConf.TLSName = params.TLSName
+		if err := flamingo.SpawnHTTP(httpConf); err != nil {
+			if !params.IgnoreFailures {
+				log.Fatalf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { httpConf.Shutdown() })
 	}
 }
 
