@@ -80,7 +80,7 @@ func snmpStart(c *ConfSNMP) {
 	buff := make([]byte, 4096)
 	for {
 		if c.IsShutdown() {
-			log.Debugf("snmp server is shutting down")
+			log.Debugf("snmp server on %s:%d is shutting down", c.BindHost, c.BindPort)
 			break
 		}
 
@@ -121,7 +121,7 @@ func snmpProcessData(c *ConfSNMP, raddr net.Addr, data []byte) {
 		c.RecordWriter.Record("snmp", raddr.String(), map[string]string{
 			"community": res.Community,
 			"version":   res.Version.String(),
-			"port":      fmt.Sprintf("%d", c.BindPort),
+			"_server":   fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
 		})
 	}
 }

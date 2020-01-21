@@ -8,15 +8,24 @@ import (
 )
 
 var ToolName = "flamingo"
-var Version = "0.0.1"
-var BuildDate = "2020-01-10"
+var Version = "0.0.2"
+var BuildDate = "2020-01-20"
 
 type flamingoParameters struct {
-	Verbose    bool
-	SNMPPorts  string
-	SSHPorts   string
-	SSHHostKey string
-	Protocols  string
+	Verbose        bool
+	IgnoreFailures bool
+	SNMPPorts      string
+	SSHPorts       string
+	SSHHostKey     string
+	LDAPPorts      string
+	LDAPSPorts     string
+	TLSCertFile    string
+	TLSCertData    string
+	TLSKeyFile     string
+	TLSKeyData     string
+	TLSName        string
+	TLSOrgName     string
+	Protocols      string
 }
 
 var params = &flamingoParameters{}
@@ -43,7 +52,9 @@ func init() {
 
 	// General options
 	rootCmd.PersistentFlags().BoolVarP(&params.Verbose, "verbose", "v", false, "Display verbose output")
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp", "Specify a comma-separated list of protocols")
+	rootCmd.PersistentFlags().BoolVarP(&params.IgnoreFailures, "ignore", "I", false, "Ignore individual listener failures")
+
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -51,4 +62,14 @@ func init() {
 	// SSH parameters
 	rootCmd.Flags().StringVarP(&params.SSHPorts, "ssh-ports", "", "22", "The list of TCP ports to listen on for SSH")
 	rootCmd.Flags().StringVarP(&params.SSHHostKey, "ssh-host-key", "", "", "An optional path to a SSH host key on disk")
+
+	// LDAP(S) parameters
+	rootCmd.Flags().StringVarP(&params.LDAPPorts, "ldap-ports", "", "389", "The list of TCP ports to listen on for LDAP")
+	rootCmd.Flags().StringVarP(&params.LDAPSPorts, "ldaps-ports", "", "636", "The list of TCP ports to listen on for LDAPS")
+
+	rootCmd.Flags().StringVarP(&params.TLSCertFile, "tls-cert", "", "", "An optional x509 certificate for TLS listeners")
+	rootCmd.Flags().StringVarP(&params.TLSKeyFile, "tls-key", "", "", "An optional x509 key for TLS listeners")
+	rootCmd.Flags().StringVarP(&params.TLSName, "tls-name", "", "localhost", "A server name to use with TLS listeners")
+	rootCmd.Flags().StringVarP(&params.TLSOrgName, "tls-org", "", "Flamingo Feed, Inc.", "An organization to use for self-signed certificates")
+
 }

@@ -62,6 +62,7 @@ func getSSHHandlePassword(c *ConfSSH) func(ssh.ConnMetadata, []byte) (*ssh.Permi
 				"password": string(pass),
 				"version":  string(sshConn.ClientVersion()),
 				"method":   "password",
+				"_server":  fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
 			},
 		)
 		return nil, fmt.Errorf("password collected for %q", sshConn.User())
@@ -79,6 +80,7 @@ func getSSHHandlePublic(c *ConfSSH) func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.
 				"pubkey":        strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pubkey))),
 				"version":       string(sshConn.ClientVersion()),
 				"method":        "pubkey",
+				"_server":       fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
 			},
 		)
 		return nil, fmt.Errorf("pubkey collected for %q", sshConn.User())
@@ -122,7 +124,7 @@ func sshStart(c *ConfSSH) {
 	log.Debugf("ssh is listening on %s:%d", c.BindHost, c.BindPort)
 	for {
 		if c.IsShutdown() {
-			log.Debugf("ssh server is shutting down")
+			log.Debugf("ssh server on %s:%d is shutting down", c.BindHost, c.BindPort)
 			break
 		}
 		tcpConn, err := c.listener.Accept()

@@ -9,10 +9,13 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	stdlog "log"
 
 	"github.com/atredispartners/flamingo/pkg/flamingo"
 	log "github.com/sirupsen/logrus"
@@ -25,6 +28,9 @@ var cleanupHandlers = []func(){}
 
 func startCapture(cmd *cobra.Command, args []string) {
 
+	running := false
+	state := new(sync.Mutex)
+
 	fm := log.FieldMap{
 		log.FieldKeyTime: "_etime",
 		log.FieldKeyMsg:  "output",
@@ -32,6 +38,12 @@ func startCapture(cmd *cobra.Command, args []string) {
 
 	// Configure the JSON formatter
 	log.SetFormatter(&log.JSONFormatter{TimestampFormat: time.RFC3339, FieldMap: fm})
+
+	// Redirect the standard logger to logrus output (for ldap and other libraries)
+	redirLog := log.New()
+	redirLog.SetFormatter(&log.JSONFormatter{TimestampFormat: time.RFC3339, FieldMap: fm})
+	stdlog.SetOutput(redirLog.Writer())
+	stdlog.SetFlags(0)
 
 	// Set debug level if verbose is configured
 	if params.Verbose {
@@ -43,7 +55,14 @@ func startCapture(cmd *cobra.Command, args []string) {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigs
+		state.Lock()
+		defer state.Unlock()
+		if !running {
+			log.Printf("terminating early...")
+			os.Exit(1)
+		}
 		done = true
+
 	}()
 
 	// Process CLI arguments
@@ -55,6 +74,9 @@ func startCapture(cmd *cobra.Command, args []string) {
 
 	// Configure output actions
 	rw := setupOutput(args)
+
+	// Configure TLS certificates
+	setupTLS()
 
 	// Setup protocol listeners
 
@@ -68,10 +90,20 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupSSH(rw)
 	}
 
+	// LDAP/LDAPS
+	if _, enabled := protocols["ldap"]; enabled {
+		setupLDAP(rw)
+		setupLDAPS(rw)
+	}
+
 	// Make sure at least one capture is running
 	if protocolCount == 0 {
 		log.Fatalf("at least one protocol must be enabled")
 	}
+
+	state.Lock()
+	running = true
+	state.Unlock()
 
 	// Main loop
 	for {
@@ -183,8 +215,33 @@ func getWebhookWriter(url string) (flamingo.OutputWriter, flamingo.OutputCleaner
 	}, flamingo.OutputCleanerNoOp, nil
 }
 
-func setupSSH(rw *flamingo.RecordWriter) {
+func setupTLS() {
+	tlsCertData := ""
+	tlsKeyData := ""
 
+	if params.TLSCertFile != "" {
+		raw, err := ioutil.ReadFile(params.TLSCertFile)
+		if err != nil {
+			log.Fatalf("failed to read TLS certificate: %s", err)
+		}
+		tlsCertData = string(raw)
+		tlsKeyData = tlsCertData
+
+		if params.TLSKeyFile != "" {
+			rawKey, err := ioutil.ReadFile(params.TLSKeyFile)
+			if err != nil {
+				log.Fatalf("failed to read TLS certificate: %s", err)
+			}
+			tlsKeyData = string(rawKey)
+		}
+	}
+
+	if tlsCertData == "" || tlsKeyData == "" {
+		generateTLSCertificate()
+	}
+}
+
+func setupSSH(rw *flamingo.RecordWriter) {
 	sshHostKey := ""
 	if params.SSHHostKey != "" {
 		data, err := ioutil.ReadFile(params.SSHHostKey)
@@ -206,12 +263,16 @@ func setupSSH(rw *flamingo.RecordWriter) {
 		sshConf.BindPort = uint16(port)
 		sshConf.RecordWriter = rw
 		if err := flamingo.SpawnSSH(sshConf); err != nil {
-			log.Fatalf("failed to start ssh server: %q", err)
+			if !params.IgnoreFailures {
+				log.Fatalf("failed to start ssh server %s:%d: %s", sshConf.BindHost, sshConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start ssh server %s:%d: %s", sshConf.BindHost, sshConf.BindPort, err)
+			}
+			continue
 		}
+		protocolCount++
 		cleanupHandlers = append(cleanupHandlers, func() { sshConf.Shutdown() })
 	}
-
-	protocolCount++
 }
 
 func setupSNMP(rw *flamingo.RecordWriter) {
@@ -228,12 +289,72 @@ func setupSNMP(rw *flamingo.RecordWriter) {
 		snmpConf.BindPort = uint16(port)
 		snmpConf.RecordWriter = rw
 		if err := flamingo.SpawnSNMP(snmpConf); err != nil {
-			log.Fatalf("failed to start snmp server: %q", err)
+			if !params.IgnoreFailures {
+				log.Fatalf("failed to start snmp server %s:%d: %s", snmpConf.BindHost, snmpConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start snmb server %s:%d: %s", snmpConf.BindHost, snmpConf.BindPort, err)
+			}
+			continue
 		}
+		protocolCount++
 		cleanupHandlers = append(cleanupHandlers, func() { snmpConf.Shutdown() })
 	}
+}
 
-	protocolCount++
+func setupLDAP(rw *flamingo.RecordWriter) {
+
+	// Create a listener for each port
+	ldapPorts, err := flamingo.CrackPorts(params.LDAPPorts)
+	if err != nil {
+		log.Fatalf("failed to process ldap ports %s: %s", params.LDAPPorts, err)
+	}
+
+	for _, port := range ldapPorts {
+		port := port
+		ldapConf := flamingo.NewConfLDAP()
+		ldapConf.BindPort = uint16(port)
+		ldapConf.RecordWriter = rw
+		if err := flamingo.SpawnLDAP(ldapConf); err != nil {
+			if !params.IgnoreFailures {
+				log.Fatalf("failed to start ldap server %s:%d: %s", ldapConf.BindHost, ldapConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start ldap server %s:%d: %s", ldapConf.BindHost, ldapConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { ldapConf.Shutdown() })
+	}
+}
+
+func setupLDAPS(rw *flamingo.RecordWriter) {
+
+	// Create a listener for each port
+	ldapsPorts, err := flamingo.CrackPorts(params.LDAPSPorts)
+	if err != nil {
+		log.Fatalf("failed to process ldap ports %s: %s", params.LDAPSPorts, err)
+	}
+
+	for _, port := range ldapsPorts {
+		port := port
+		ldapConf := flamingo.NewConfLDAP()
+		ldapConf.BindPort = uint16(port)
+		ldapConf.RecordWriter = rw
+		ldapConf.TLS = true
+		ldapConf.TLSCert = params.TLSCertData
+		ldapConf.TLSKey = params.TLSKeyData
+		ldapConf.TLSName = params.TLSName
+		if err := flamingo.SpawnLDAP(ldapConf); err != nil {
+			if !params.IgnoreFailures {
+				log.Fatalf("failed to start ldaps server %s:%d: %q", ldapConf.BindHost, ldapConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start ldaps server %s:%d: %q", ldapConf.BindHost, ldapConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { ldapConf.Shutdown() })
+	}
 }
 
 func sendWebhook(url string, msg string) error {
