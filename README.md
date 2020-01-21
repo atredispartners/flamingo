@@ -14,7 +14,9 @@ $ GOOS=win32 GOARCH=amd64 go build -o flamingo.exe
 ```
 
 ```
-$ go get -u -v github.com/atredispartners/flamingo && go install -v github.com/atredispartners/flamingo && $GOPATH/bin/flamingo
+$ go get -u -v github.com/atredispartners/flamingo && \
+  go install -v github.com/atredispartners/flamingo && \
+  $GOPATH/bin/flamingo
 ```
 
 2. Run the binary and collect credentials
