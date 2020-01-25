@@ -38,6 +38,7 @@ func startCapture(cmd *cobra.Command, args []string) {
 
 	// Configure the JSON formatter
 	log.SetFormatter(&log.JSONFormatter{TimestampFormat: time.RFC3339, FieldMap: fm})
+	log.SetOutput(os.Stdout)
 
 	// Redirect the standard logger to logrus output (for ldap and other libraries)
 	redirLog := log.New()
