@@ -3,12 +3,12 @@ package ldap
 import (
 	"crypto/tls"
 	"io"
-	"log"
 	"net"
 	"strings"
 	"sync"
 
-	"github.com/nmcclain/asn1-ber"
+	ber "github.com/nmcclain/asn1-ber"
+	log "github.com/sirupsen/logrus"
 )
 
 type Binder interface {
@@ -199,7 +199,7 @@ func (server *Server) Serve(ln net.Listener) error {
 			conn, err := ln.Accept()
 			if err != nil {
 				if !strings.HasSuffix(err.Error(), "use of closed network connection") {
-					log.Printf("Error accepting network connection: %s", err.Error())
+					// log.Printf("Error accepting network connection: %s", err.Error())
 				}
 				break
 			}
@@ -232,24 +232,24 @@ handler:
 		if err == io.EOF { // Client closed connection
 			break
 		} else if err != nil {
-			log.Printf("handleConnection ber.ReadPacket ERROR: %s", err.Error())
+			// log.Printf("handleConnection ber.ReadPacket ERROR: %s", err.Error())
 			break
 		}
 
 		// sanity check this packet
 		if len(packet.Children) < 2 {
-			log.Print("len(packet.Children) < 2")
+			// log.Print("len(packet.Children) < 2")
 			break
 		}
 		// check the message ID and ClassType
 		messageID, ok := packet.Children[0].Value.(uint64)
 		if !ok {
-			log.Print("malformed messageID")
+			// log.Print("malformed messageID")
 			break
 		}
 		req := packet.Children[1]
 		if req.ClassType != ber.ClassApplication {
-			log.Print("req.ClassType != ber.ClassApplication")
+			// log.Print("req.ClassType != ber.ClassApplication")
 			break
 		}
 		// handle controls if present
@@ -268,9 +268,9 @@ handler:
 		default:
 			responsePacket := encodeLDAPResponse(messageID, ApplicationAddResponse, LDAPResultOperationsError, "Unsupported operation: add")
 			if err = sendPacket(conn, responsePacket); err != nil {
-				log.Printf("sendPacket error %s", err.Error())
+				// log.Printf("sendPacket error %s", err.Error())
 			}
-			log.Printf("Unhandled operation: %s [%d]", ApplicationMap[req.Tag], req.Tag)
+			// log.Printf("Unhandled operation: %s [%d]", ApplicationMap[req.Tag], req.Tag)
 			break handler
 
 		case ApplicationBindRequest:
@@ -279,13 +279,13 @@ handler:
 			if ldapResultCode == LDAPResultSuccess {
 				boundDN, ok = req.Children[1].Value.(string)
 				if !ok {
-					log.Printf("Malformed Bind DN")
+					// log.Printf("Malformed Bind DN")
 					break handler
 				}
 			}
 			responsePacket := encodeBindResponse(messageID, ldapResultCode)
 			if err = sendPacket(conn, responsePacket); err != nil {
-				log.Printf("sendPacket error %s", err.Error())
+				// log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationSearchRequest:
@@ -294,13 +294,13 @@ handler:
 				log.Printf("handleSearchRequest error %s", err.Error()) // TODO: make this more testable/better err handling - stop using log, stop using breaks?
 				e := err.(*Error)
 				if err = sendPacket(conn, encodeSearchDone(messageID, e.ResultCode)); err != nil {
-					log.Printf("sendPacket error %s", err.Error())
+					// log.Printf("sendPacket error %s", err.Error())
 					break handler
 				}
 				break handler
 			} else {
 				if err = sendPacket(conn, encodeSearchDone(messageID, LDAPResultSuccess)); err != nil {
-					log.Printf("sendPacket error %s", err.Error())
+					// log.Printf("sendPacket error %s", err.Error())
 					break handler
 				}
 			}
@@ -311,7 +311,7 @@ handler:
 			ldapResultCode := HandleExtendedRequest(req, boundDN, server.ExtendedFns, conn)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationExtendedResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
 			if err = sendPacket(conn, responsePacket); err != nil {
-				log.Printf("sendPacket error %s", err.Error())
+				// log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationAbandonRequest:
@@ -322,14 +322,14 @@ handler:
 			ldapResultCode := HandleAddRequest(req, boundDN, server.AddFns, conn)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationAddResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
 			if err = sendPacket(conn, responsePacket); err != nil {
-				log.Printf("sendPacket error %s", err.Error())
+				// log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationModifyRequest:
 			ldapResultCode := HandleModifyRequest(req, boundDN, server.ModifyFns, conn)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationModifyResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
 			if err = sendPacket(conn, responsePacket); err != nil {
-				log.Printf("sendPacket error %s", err.Error())
+				// log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationDelRequest:
@@ -343,14 +343,14 @@ handler:
 			ldapResultCode := HandleModifyDNRequest(req, boundDN, server.ModifyDNFns, conn)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationModifyDNResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
 			if err = sendPacket(conn, responsePacket); err != nil {
-				log.Printf("sendPacket error %s", err.Error())
+				// log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationCompareRequest:
 			ldapResultCode := HandleCompareRequest(req, boundDN, server.CompareFns, conn)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationCompareResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
 			if err = sendPacket(conn, responsePacket); err != nil {
-				log.Printf("sendPacket error %s", err.Error())
+				// log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		}
@@ -367,7 +367,7 @@ handler:
 func sendPacket(conn net.Conn, packet *ber.Packet) error {
 	_, err := conn.Write(packet.Bytes())
 	if err != nil {
-		log.Printf("Error Sending Message: %s", err.Error())
+		// log.Printf("Error Sending Message: %s", err.Error())
 		return err
 	}
 	return nil

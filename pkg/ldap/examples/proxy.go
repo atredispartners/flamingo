@@ -5,7 +5,7 @@ package main
 import (
 	"crypto/sha256"
 	"fmt"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
 

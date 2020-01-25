@@ -1,5 +1,7 @@
 # LDAP for Golang
 
+Forked from https://github.com/nmcclain/ldap.git
+
 This library provides basic LDAP v3 functionality for the GO programming language.
 
 The **client** portion is limited, but sufficient to perform LDAP authentication and directory lookups (binds and searches) against any modern LDAP server (tested with OpenLDAP and AD).

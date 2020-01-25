@@ -3,7 +3,7 @@
 package main
 
 import (
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net"
 
 	"github.com/nmcclain/ldap"

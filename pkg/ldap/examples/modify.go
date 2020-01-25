@@ -9,7 +9,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/nmcclain/ldap"
 )

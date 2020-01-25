@@ -2,7 +2,7 @@ package ldap
 
 import (
 	"bytes"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"net"
 	"os/exec"
 	"strings"

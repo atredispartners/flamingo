@@ -7,12 +7,13 @@ package ldap
 import (
 	"crypto/tls"
 	"errors"
-	"log"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/nmcclain/asn1-ber"
+	log "github.com/sirupsen/logrus"
+
+	ber "github.com/nmcclain/asn1-ber"
 )
 
 const (
@@ -123,7 +124,7 @@ func (l *Conn) Close() {
 
 		l.Debug.Printf("Closing network connection")
 		if err := l.conn.Close(); err != nil {
-			log.Print(err)
+			l.Debug.Printf("error: %s", err)
 		}
 	})
 	<-l.chanDone

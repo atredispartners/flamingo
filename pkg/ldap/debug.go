@@ -1,9 +1,8 @@
 package ldap
 
 import (
-	"log"
-
-	"github.com/nmcclain/asn1-ber"
+	ber "github.com/nmcclain/asn1-ber"
+	log "github.com/sirupsen/logrus"
 )
 
 // debbuging type
@@ -13,7 +12,7 @@ type debugging bool
 // write debug output
 func (debug debugging) Printf(format string, args ...interface{}) {
 	if debug {
-		log.Printf(format, args...)
+		log.Debugf(format, args...)
 	}
 }
 

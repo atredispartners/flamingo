@@ -1,10 +1,9 @@
 package ldap
 
 import (
-	"log"
 	"net"
 
-	"github.com/nmcclain/asn1-ber"
+	ber "github.com/nmcclain/asn1-ber"
 )
 
 func HandleAddRequest(req *ber.Packet, boundDN string, fns map[string]Adder, conn net.Conn) (resultCode LDAPResultCode) {
@@ -45,7 +44,7 @@ func HandleAddRequest(req *ber.Packet, boundDN string, fns map[string]Adder, con
 	fn := routeFunc(boundDN, fnNames)
 	resultCode, err := fns[fn].Add(boundDN, addReq, conn)
 	if err != nil {
-		log.Printf("AddFn Error %s", err.Error())
+		// log.Printf("AddFn Error %s", err.Error())
 		return LDAPResultOperationsError
 	}
 	return resultCode
@@ -60,7 +59,7 @@ func HandleDeleteRequest(req *ber.Packet, boundDN string, fns map[string]Deleter
 	fn := routeFunc(boundDN, fnNames)
 	resultCode, err := fns[fn].Delete(boundDN, deleteDN, conn)
 	if err != nil {
-		log.Printf("DeleteFn Error %s", err.Error())
+		// log.Printf("DeleteFn Error %s", err.Error())
 		return LDAPResultOperationsError
 	}
 	return resultCode
@@ -102,7 +101,7 @@ func HandleModifyRequest(req *ber.Packet, boundDN string, fns map[string]Modifie
 		}
 		switch op {
 		default:
-			log.Printf("Unrecognized Modify attribute %d", op)
+			// log.Printf("Unrecognized Modify attribute %d", op)
 			return LDAPResultProtocolError
 		case AddAttribute:
 			modReq.Add(attr.AttrType, attr.AttrVals)
@@ -119,7 +118,7 @@ func HandleModifyRequest(req *ber.Packet, boundDN string, fns map[string]Modifie
 	fn := routeFunc(boundDN, fnNames)
 	resultCode, err := fns[fn].Modify(boundDN, modReq, conn)
 	if err != nil {
-		log.Printf("ModifyFn Error %s", err.Error())
+		// log.Printf("ModifyFn Error %s", err.Error())
 		return LDAPResultOperationsError
 	}
 	return resultCode
@@ -155,7 +154,7 @@ func HandleCompareRequest(req *ber.Packet, boundDN string, fns map[string]Compar
 	fn := routeFunc(boundDN, fnNames)
 	resultCode, err := fns[fn].Compare(boundDN, compReq, conn)
 	if err != nil {
-		log.Printf("CompareFn Error %s", err.Error())
+		// log.Printf("CompareFn Error %s", err.Error())
 		return LDAPResultOperationsError
 	}
 	return resultCode
@@ -178,7 +177,7 @@ func HandleExtendedRequest(req *ber.Packet, boundDN string, fns map[string]Exten
 	fn := routeFunc(boundDN, fnNames)
 	resultCode, err := fns[fn].Extended(boundDN, extReq, conn)
 	if err != nil {
-		log.Printf("ExtendedFn Error %s", err.Error())
+		// log.Printf("ExtendedFn Error %s", err.Error())
 		return LDAPResultOperationsError
 	}
 	return resultCode
@@ -225,7 +224,7 @@ func HandleModifyDNRequest(req *ber.Packet, boundDN string, fns map[string]Modif
 	fn := routeFunc(boundDN, fnNames)
 	resultCode, err := fns[fn].ModifyDN(boundDN, mdnReq, conn)
 	if err != nil {
-		log.Printf("ModifyDN Error %s", err.Error())
+		// log.Printf("ModifyDN Error %s", err.Error())
 		return LDAPResultOperationsError
 	}
 	return resultCode

@@ -31,9 +31,8 @@ package ldap
 
 import (
 	"errors"
-	"log"
 
-	"github.com/nmcclain/asn1-ber"
+	ber "github.com/nmcclain/asn1-ber"
 )
 
 const (
@@ -154,7 +153,7 @@ func (l *Conn) Modify(modifyRequest *ModifyRequest) error {
 			return NewError(resultCode, errors.New(resultDescription))
 		}
 	} else {
-		log.Printf("Unexpected Response: %d", packet.Children[1].Tag)
+		l.Debug.Printf("Unexpected Response: %d", packet.Children[1].Tag)
 	}
 
 	l.Debug.Printf("%d: returning", messageID)
