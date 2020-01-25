@@ -1,0 +1,16 @@
+dn: cn=testy,dc=example,dc=com
+changetype: modify
+replace: mail
+mail: modme@example.com
+-
+delete: manager
+-
+add: title
+title: Grand Poobah
+-
+delete: description
+-
+delete: details
+-
+replace: fullname
+fullname: Test Testerson

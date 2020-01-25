@@ -1,0 +1,6 @@
+dn: cn=Barbara Jensen,dc=example,dc=com
+objectClass: person
+cn: Barbara Jensen
+sn: Jensen
+mail: bjensen@example.com
+uid: bjensen

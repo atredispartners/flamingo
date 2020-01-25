@@ -1,0 +1,6 @@
+dn: cn=Big Bob,dc=example,dc=com
+objectClass: person
+cn: Big Bob
+sn: Bob
+mail: bob@example.com
+uid: bob
