@@ -155,10 +155,13 @@ func setupOutput(outputs []string) *flamingo.RecordWriter {
 	stdoutLogging := false
 
 	rw := flamingo.NewRecordWriter()
+
+	// Default logs to standard output and flamingo.log
 	if len(outputs) == 0 {
-		rw.OutputWriters = append(rw.OutputWriters, stdoutWriter)
-		stdoutLogging = true
-		return rw
+		outputs = []string{
+			"-",
+			"flamingo.log",
+		}
 	}
 
 	for _, output := range outputs {
