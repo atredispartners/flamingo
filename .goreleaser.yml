@@ -1,0 +1,60 @@
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+builds:
+  - 
+    env:
+    - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X "cmd.Version={{.Version}} cmd.BuildDate={{.Date}} cmd.BuildHash={{.FullCommit}}"
+    gcflags:
+      - all=-trimpath={{.Env.GOPATH}}
+    asmflags:
+      - all=-trimpath={{.Env.GOPATH}}      
+    goos:
+      - windows
+      - linux
+      - darwin
+      - freebsd
+    goarch:
+      - amd64
+      - i386
+      - arm
+      - arm64
+    goarm:
+      - 5
+      - 6
+      - 7
+    ignore:         
+      - goos: darwin
+        goarch: 386
+      - goos: darwin
+        goarch: arm
+      - goos: darwin
+        goarch: arm64        
+      - goos: freebsd
+        goarch: arm
+      - goos: freebsd
+        goarch: arm64
+signs:
+  - artifacts: checksum            
+archives:
+- replacements:
+    darwin: macos
+    386: x86
+    arm64: aarch64
+  format: binary
+  files:
+    - none*
+  name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}{{.Arm}}"
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ .Tag }}-next"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+    - '^docs:'
+    - '^test:'
