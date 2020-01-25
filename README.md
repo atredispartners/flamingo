@@ -6,7 +6,7 @@ Currently supports SSH, HTTP, LDAP, and SNMP credential collection.
 
 ## Usage
 
-1. Obtain the flamingo binary from [releases](https://github.com/atredispartners/flamingo/releases) page or build from source.
+1. Obtain the flamingo binary from the [releases](https://github.com/atredispartners/flamingo/releases) page or build from source.
 
 ```
 $ GOOS=win32 GOARCH=amd64 go build -o flamingo.exe
