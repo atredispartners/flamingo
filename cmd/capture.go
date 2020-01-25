@@ -72,6 +72,18 @@ func startCapture(cmd *cobra.Command, args []string) {
 		protocols[pname] = true
 	}
 
+	// Verify HTTP authentication mode
+	switch params.HTTPAuthMode {
+	case "ntlm", "basic":
+		// OK
+	case "":
+		// Default to NTLM if empty
+		params.HTTPAuthMode = "ntlm"
+	default:
+		// Bail out early
+		log.Fatalf("invalid HTTP authentication mode specified: %s", params.HTTPAuthMode)
+	}
+
 	// Configure output actions
 	rw := setupOutput(args)
 
@@ -385,6 +397,7 @@ func setupHTTP(rw *flamingo.RecordWriter) {
 		httpConf.BindPort = uint16(port)
 		httpConf.RecordWriter = rw
 		httpConf.BasicRealm = params.HTTPBasicRealm
+		httpConf.AuthMode = params.HTTPAuthMode
 		if err := flamingo.SpawnHTTP(httpConf); err != nil {
 			if !params.IgnoreFailures {
 				log.Fatalf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
@@ -416,6 +429,7 @@ func setupHTTPS(rw *flamingo.RecordWriter) {
 		httpConf.TLSCert = params.TLSCertData
 		httpConf.TLSKey = params.TLSKeyData
 		httpConf.TLSName = params.TLSName
+		httpConf.AuthMode = params.HTTPAuthMode
 		if err := flamingo.SpawnHTTP(httpConf); err != nil {
 			if !params.IgnoreFailures {
 				log.Fatalf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)

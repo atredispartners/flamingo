@@ -15,9 +15,9 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Challenge is the challenge blob that Responder sends, using
+// NTLMChallenge is the challenge blob that Responder sends, using
 // 1122334455667788 for easier offline cracking
-const Challenge = "TlRMTVNTUAACAAAABgAGADgAAAAFAomiESIzRFVmd4gAAAAAAAAAAIAAgAA+AAAABQL" +
+const NTLMChallenge = "TlRMTVNTUAACAAAABgAGADgAAAAFAomiESIzRFVmd4gAAAAAAAAAAIAAgAA+AAAABQL" +
 	"ODgAAAA9TAE0AQgACAAYARgBUAFAAAQAWAEYAVABQAC0AVABPAE8ATABCAE8AWAAEABIAZgB0AHAA" +
 	"LgBsAG8AYwBhAGwAAwAoAHMAZQByAHYAZQByADIAMAAxADYALgBmAHQAYgAuAGwAbwBjAGEAbAAFA" +
 	"BIAZgB0AHAALgBsAG8AYwBhAGwAAAAAAA=="
@@ -27,6 +27,7 @@ type ConfHTTP struct {
 	BindPort     uint16
 	BindHost     string
 	BasicRealm   string
+	AuthMode     string
 	RecordWriter *RecordWriter
 	TLS          bool
 	TLSName      string
@@ -121,8 +122,15 @@ func startHTTP(c *ConfHTTP) {
 func httpHandler(c *ConfHTTP) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
-		if httpHandleAuth(c, w, r) {
-			return
+		switch c.AuthMode {
+		case "ntlm":
+			if httpHandleNTLMAuth(c, w, r) {
+				return
+			}
+		case "basic":
+			if httpHandleBasicAuth(c, w, r) {
+				return
+			}
 		}
 
 		log.WithFields(log.Fields{
@@ -182,7 +190,7 @@ func httpHandleBasicAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) bo
 	return true
 }
 
-func httpHandleAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok bool) {
+func httpHandleNTLMAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok bool) {
 
 	headers := map[string]string{
 		"Connection": "Keep-Alive",
@@ -214,15 +222,15 @@ func httpHandleAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok boo
 			w.Header().Set("WWW-Authenticate", "NTLM")
 			w.WriteHeader(401)
 		case 1:
-			w.Header().Set("WWW-Authenticate", fmt.Sprintf("NTLM %s", Challenge))
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf("NTLM %s", NTLMChallenge))
 			w.WriteHeader(401)
 		case 3:
-			ntlmBytes, err := headerBytes(authHeader)
+			ntlmBytes, err := ntlmHeaderBytes(authHeader)
 			if err != nil {
 				w.WriteHeader(404)
 				return
 			}
-			hashType := getHashType(authHeader)
+			hashType := ntlmGetHashType(authHeader)
 			netNTLMResponse, err := ntlm.ParseAuthenticateMessage(ntlmBytes, hashType)
 			if err != nil {
 				w.WriteHeader(404)
@@ -237,12 +245,12 @@ func httpHandleAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok boo
 				pname,
 				r.RemoteAddr,
 				map[string]string{
-					"_server": fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
-					"agent":   r.UserAgent(),
-					"url":     r.RequestURI,
-					"user":    netNTLMResponse.UserName.String(),
-					"hashcat": toHashcat(netNTLMResponse, hashType),
-					"method":  "NTLMSSP",
+					"_server":  fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
+					"agent":    r.UserAgent(),
+					"url":      r.RequestURI,
+					"username": netNTLMResponse.UserName.String(),
+					"hashcat":  ntlmToHashcat(netNTLMResponse, hashType),
+					"method":   "NTLMSSP",
 				},
 			)
 			ok = true
@@ -254,8 +262,8 @@ func httpHandleAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok boo
 	return
 }
 
-func getHashType(header string) int {
-	netNTLMMessageBytes, err := headerBytes(header)
+func ntlmGetHashType(header string) int {
+	netNTLMMessageBytes, err := ntlmHeaderBytes(header)
 	if err != nil {
 		return -1
 	}
@@ -268,7 +276,7 @@ func getHashType(header string) int {
 }
 
 func ntlmType(header string) int {
-	netNTLMMessageBytes, err := headerBytes(header)
+	netNTLMMessageBytes, err := ntlmHeaderBytes(header)
 	if err != nil {
 		return -1
 	}
@@ -284,7 +292,7 @@ func ntlmType(header string) int {
 	}
 }
 
-func toHashcat(h *ntlm.AuthenticateMessage, ntlmVer int) (out string) {
+func ntlmToHashcat(h *ntlm.AuthenticateMessage, ntlmVer int) (out string) {
 	template := "%s::%s:%s:%s:%s"
 	un := h.UserName.String()
 	dn := h.DomainName.String()
@@ -304,7 +312,7 @@ func toHashcat(h *ntlm.AuthenticateMessage, ntlmVer int) (out string) {
 	return
 }
 
-func headerBytes(header string) ([]byte, error) {
+func ntlmHeaderBytes(header string) ([]byte, error) {
 	b64 := strings.TrimPrefix(header, "NTLM ")
 	netNTLMMessageBytes, err := base64.StdEncoding.DecodeString(b64)
 	if err != nil {

@@ -22,6 +22,7 @@ type flamingoParameters struct {
 	HTTPPorts      string
 	HTTPSPorts     string
 	HTTPBasicRealm string
+	HTTPAuthMode   string
 	TLSCertFile    string
 	TLSCertData    string
 	TLSKeyFile     string
@@ -74,6 +75,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.HTTPPorts, "http-ports", "", "80", "The list of TCP ports to listen on for HTTP")
 	rootCmd.Flags().StringVarP(&params.HTTPSPorts, "https-ports", "", "443", "The list of TCP ports to listen on for HTTPS")
 	rootCmd.Flags().StringVarP(&params.HTTPBasicRealm, "http-realm", "", "Administration", "The authentication realm to present")
+	rootCmd.Flags().StringVarP(&params.HTTPAuthMode, "http-auth-mode", "", "ntlm", "The authentication mode for the HTTP listeners (ntlm or basic)")
 
 	rootCmd.Flags().StringVarP(&params.TLSCertFile, "tls-cert", "", "", "An optional x509 certificate for TLS listeners")
 	rootCmd.Flags().StringVarP(&params.TLSKeyFile, "tls-key", "", "", "An optional x509 key for TLS listeners")
