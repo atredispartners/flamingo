@@ -213,7 +213,8 @@ func stdoutWriter(rec map[string]string) error {
 }
 
 func getFileWriter(path string) (flamingo.OutputWriter, flamingo.OutputCleaner, error) {
-	fd, err := os.Create(path)
+
+	fd, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return flamingo.OutputWriterNoOp, nil, err
 	}
