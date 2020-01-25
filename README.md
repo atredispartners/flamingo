@@ -45,3 +45,9 @@ Supported outputs:
  * http://[url] or https://[url] will deliver results via webhook (slack, mattermost, etc)
  * anything else is treated as an output file name
 
+
+## Credits
+
+ * Initial requirements by @chris-atredis
+ * Project creation and maintenance by @hdm
+ * NTLM support for HTTP by @audibleblink
