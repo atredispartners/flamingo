@@ -50,6 +50,10 @@ func startCapture(cmd *cobra.Command, args []string) {
 		log.SetLevel(log.DebugLevel)
 	}
 
+	if !params.Quiet {
+		fmt.Fprintf(os.Stderr, "flamingo v%s (%s) [%s] is waiting to feed...\n", Version, BuildDate, BuildHash)
+	}
+
 	done := false
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)

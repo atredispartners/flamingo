@@ -7,12 +7,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ToolName controls what this program thinks it is
 var ToolName = "flamingo"
+
+// Version is set by goreleaser
 var Version = "0.0.0"
+
+// BuildDate is set by goreleaser
 var BuildDate = ""
+
+// BuildHash is set by goreleaser
 var BuildHash = ""
 
 type flamingoParameters struct {
+	Quiet          bool
 	Verbose        bool
 	IgnoreFailures bool
 	SNMPPorts      string
@@ -57,6 +65,7 @@ func init() {
 
 	// General options
 	rootCmd.PersistentFlags().BoolVarP(&params.Verbose, "verbose", "v", false, "Display verbose output")
+	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
 	rootCmd.PersistentFlags().BoolVarP(&params.IgnoreFailures, "ignore", "I", false, "Ignore individual listener failures")
 
 	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http", "Specify a comma-separated list of protocols")
