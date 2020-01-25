@@ -6,8 +6,11 @@ Currently supports SSH, HTTP, LDAP, and SNMP credential collection.
 
 ## Usage
 
-1. Build and/or install a binary
+1. Obtain the flamingo binary
 
+a) Download the latest build from the [releases](https://github.com/atredispartners/flamingo/releases) page.
+
+b) Build a binary using a Go (1.13+) environment:
 
 ```
 $ GOOS=win32 GOARCH=amd64 go build -o flamingo.exe
@@ -21,7 +24,7 @@ $ go get -u -v github.com/atredispartners/flamingo && \
 
 2. Run the binary and collect credentials
 ```
-C:\> flamingo.exe flamingo.log
+C:\> flamingo.exe
 
 {"_etime":"2020-01-10T17:56:51Z","_host":"1.2.3.4:18301","_proto":"ssh","method":"pubkey","pubkey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPVSxqrWfNle0nnJrKS3NA12uhu9PHxnP4OlD843tRz/","pubkey-sha256":"SHA256:/7UkXjk0XtBe9N6RrAGGgJTGuKKi1Hgk3E+4TPo54Cw","username":"devuser","version":"SSH-2.0-OpenSSH_for_Windows_7.7"}
 
@@ -30,6 +33,8 @@ C:\> flamingo.exe flamingo.log
 {"_etime":"2020-01-10T17:56:53Z","_host":"1.2.3.4:9992","_proto":"ssh","method":"password","password":"DefaultPotato","username":"vulnscan-a","version":"SSH-2.0-OpenSSH_for_Windows_7.7"}
 
 ```
+
+The default is to log credentials to standard output and append to `flamingo.log` in the working directory. 
 
 ## Options
 
