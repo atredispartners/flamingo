@@ -159,13 +159,17 @@ func setupOutput(outputs []string) *flamingo.RecordWriter {
 	// Default logs to standard output and flamingo.log
 	if len(outputs) == 0 {
 		outputs = []string{
-			"-",
+			"stdout",
 			"flamingo.log",
 		}
 	}
 
+	if !params.Quiet {
+		log.Infof("saving credentials to %s", strings.Join(outputs, ", "))
+	}
+
 	for _, output := range outputs {
-		if output == "-" && !stdoutLogging {
+		if (output == "-" || output == "stdout") && !stdoutLogging {
 			rw.OutputWriters = append(rw.OutputWriters, stdoutWriter)
 			stdoutLogging = true
 			continue
@@ -192,6 +196,7 @@ func setupOutput(outputs []string) *flamingo.RecordWriter {
 		if cleaner != nil {
 			rw.OutputCleaners = append(rw.OutputCleaners, cleaner)
 		}
+		continue
 	}
 
 	// Always log to standard output
