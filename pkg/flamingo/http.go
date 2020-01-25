@@ -11,8 +11,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/audibleblink/go-ntlm/ntlm"
 	log "github.com/sirupsen/logrus"
 )
+
+// Challenge is the challenge blob that Responder sends, using
+// 1122334455667788 for easier offline cracking
+const Challenge = "TlRMTVNTUAACAAAABgAGADgAAAAFAomiESIzRFVmd4gAAAAAAAAAAIAAgAA+AAAABQL" +
+	"ODgAAAA9TAE0AQgACAAYARgBUAFAAAQAWAEYAVABQAC0AVABPAE8ATABCAE8AWAAEABIAZgB0AHAA" +
+	"LgBsAG8AYwBhAGwAAwAoAHMAZQByAHYAZQByADIAMAAxADYALgBmAHQAYgAuAGwAbwBjAGEAbAAFA" +
+	"BIAZgB0AHAALgBsAG8AYwBhAGwAAAAAAA=="
 
 // ConfHTTP describes the options for a HTTP service
 type ConfHTTP struct {
@@ -113,17 +121,8 @@ func startHTTP(c *ConfHTTP) {
 func httpHandler(c *ConfHTTP) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
-		// TODO: NLTMSSP Support
-		// w.Header().Set("WWW-Authenticate", "Negotiate")
-
-		w.Header().Set("WWW-Authenticate", fmt.Sprintf("Basic realm=\"%s\"", c.BasicRealm))
-		w.Header().Set("Server", "Microsoft-IIS/8.5")
-		w.WriteHeader(401)
-
-		if r.Header.Get("Authorization") != "" {
-			if httpHandleBasicAuth(c, w, r) {
-				return
-			}
+		if httpHandleAuth(c, w, r) {
+			return
 		}
 
 		log.WithFields(log.Fields{
@@ -183,53 +182,133 @@ func httpHandleBasicAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) bo
 	return true
 }
 
-// TODO: NTLMSSP Support
-/*
-func httpHandleAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) bool {
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	if len(auth) == 0 {
-		return false
+func httpHandleAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok bool) {
+
+	headers := map[string]string{
+		"Connection": "Keep-Alive",
+		"Keep-Alive": "timeout=5, max=100",
+		"Server":     "Microsoft-IIS/7.5",
 	}
 
-	bits := strings.SplitN(auth, " ", 2)
-	if len(bits) != 2 || len(bits[0]) == 0 || len(bits[1]) == 0 {
-		return false
+	for k, v := range headers {
+		w.Header().Set(k, v)
 	}
 
-	// Handle basic separately
-	atype := strings.ToLower(bits[0])
-	if atype == "basic" {
-		httpHandleBasicAuth(c, w, r)
-		return true
+	if r.Method == "OPTIONS" {
+		// OPTIONS indicates a possible WebDAV client
+		w.Header().Set("Allow", "OPTIONS,GET,HEAD,POST,PUT,DELETE,TRACE,"+
+			"PROPFIND,PROPPATCH,MKCOL,COPY,MOVE,LOCK,UNLOCK")
+
+	} else if r.Method == "GET" || r.Method == "PROPFIND" {
+		// GETs for standard HTTP client or PROPFIND for stage 2 WebDAV
+
+		authHeader := ""
+		if r.Header["Authorization"] != nil {
+			authHeader = r.Header["Authorization"][0]
+		}
+
+		switch ntlmType(authHeader) {
+		case -1:
+			w.WriteHeader(404)
+		case 0:
+			w.Header().Set("WWW-Authenticate", "NTLM")
+			w.WriteHeader(401)
+		case 1:
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf("NTLM %s", Challenge))
+			w.WriteHeader(401)
+		case 3:
+			ntlmBytes, err := headerBytes(authHeader)
+			if err != nil {
+				w.WriteHeader(404)
+				return
+			}
+			hashType := getHashType(authHeader)
+			netNTLMResponse, err := ntlm.ParseAuthenticateMessage(ntlmBytes, hashType)
+			if err != nil {
+				w.WriteHeader(404)
+				return
+			}
+
+			pname := "http"
+			if c.TLS {
+				pname = "https"
+			}
+			c.RecordWriter.Record(
+				pname,
+				r.RemoteAddr,
+				map[string]string{
+					"_server": fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
+					"agent":   r.UserAgent(),
+					"url":     r.RequestURI,
+					"user":    netNTLMResponse.UserName.String(),
+					"hashcat": toHashcat(netNTLMResponse, hashType),
+					"method":  "NTLMSSP",
+				},
+			)
+			ok = true
+
+		}
+	} else {
+		w.WriteHeader(404)
 	}
-
-	// Only process NTLM and Negotiate from here
-	if atype != "ntlm" && atype != "negotiate" {
-		return false
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(bits[1])
-	if err != nil {
-		return false
-	}
-
-	// Bail if there is no NTLMSSPHeader
-	if !bytes.HasPrefix(decoded, httpNTLMSSPHeader) {
-		return false
-	}
-
-	if len(decoded) <= len(httpNTLMSSPHeader)+1 {
-		return false
-	}
-
-
-	// Check the "type" field of the NTLMSSP header
-	switch decoded[8] {
-	}
-
-	return true
-
+	return
 }
-*/
 
-var httpNTLMSSPHeader = []byte{'N', 'T', 'L', 'M', 'S', 'S', 'P', 0}
+func getHashType(header string) int {
+	netNTLMMessageBytes, err := headerBytes(header)
+	if err != nil {
+		return -1
+	}
+
+	hashSize := netNTLMMessageBytes[22]
+	if hashSize == 24 {
+		return 1
+	}
+	return 2
+}
+
+func ntlmType(header string) int {
+	netNTLMMessageBytes, err := headerBytes(header)
+	if err != nil {
+		return -1
+	}
+
+	size := len(netNTLMMessageBytes)
+	switch {
+	case size == 0:
+		return 0
+	case size <= 64:
+		return 1
+	default:
+		return 3
+	}
+}
+
+func toHashcat(h *ntlm.AuthenticateMessage, ntlmVer int) (out string) {
+	template := "%s::%s:%s:%s:%s"
+	un := h.UserName.String()
+	dn := h.DomainName.String()
+	ws := h.Workstation.String()
+	ch := "1122334455667788"
+
+	if ntlmVer == 1 {
+		lm := h.LmChallengeResponse.String()
+		nt := h.NtlmV1Response.String()
+		out = fmt.Sprintf(template, un, ws, lm, nt, ch)
+	} else {
+		v2 := h.NtChallengeResponseFields.String()
+		lm := v2[0:31]
+		nt := v2[32 : len(v2)-1]
+		out = fmt.Sprintf(template, un, dn, ch, lm, nt)
+	}
+	return
+}
+
+func headerBytes(header string) ([]byte, error) {
+	b64 := strings.TrimPrefix(header, "NTLM ")
+	netNTLMMessageBytes, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return netNTLMMessageBytes, err
+	}
+	return netNTLMMessageBytes, err
+}
