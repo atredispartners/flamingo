@@ -4,6 +4,8 @@ A filter-feeding bird. Captures credentials sprayed across the network by variou
 
 Currently supports SSH, HTTP, LDAP, and SNMP credential collection.
 
+Pull requests are encouraged for additional protocols and output destinations.
+
 ## Usage
 
 1. Obtain the flamingo binary from the [releases](https://github.com/atredispartners/flamingo/releases) page or build from source.
