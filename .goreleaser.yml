@@ -7,7 +7,7 @@ builds:
     env:
     - CGO_ENABLED=0
     ldflags:
-      - -s -w -X "cmd.Version={{.Version}} cmd.BuildDate={{.Date}} cmd.BuildHash={{.FullCommit}}"
+      - -s -w -X "github.com/atredispartners/flamingo/cmd.Version={{.Version}} github.com/atredispartners/flamingo/cmd.BuildDate={{.Date}} github.com/atredispartners/flamingo/cmd.BuildHash={{.FullCommit}}"
     gcflags:
       - all=-trimpath={{.Env.GOPATH}}
     asmflags:
