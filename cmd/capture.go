@@ -51,7 +51,7 @@ func startCapture(cmd *cobra.Command, args []string) {
 	}
 
 	if !params.Quiet {
-		fmt.Fprintf(os.Stderr, "flamingo v%s (%s) [%s] is waiting to feed...\n", Version, BuildDate, BuildHash)
+		fmt.Fprintf(os.Stderr, "flamingo %s is waiting to feed...\n", Version)
 	}
 
 	done := false

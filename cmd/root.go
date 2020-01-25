@@ -13,12 +13,6 @@ var ToolName = "flamingo"
 // Version is set by goreleaser
 var Version = "0.0.0"
 
-// BuildDate is set by goreleaser
-var BuildDate = ""
-
-// BuildHash is set by goreleaser
-var BuildHash = ""
-
 type flamingoParameters struct {
 	Quiet          bool
 	Verbose        bool
@@ -46,7 +40,7 @@ var params = &flamingoParameters{}
 var rootCmd = &cobra.Command{
 	Use:   ToolName,
 	Short: fmt.Sprintf("%s captures inbound credentials", ToolName),
-	Long:  fmt.Sprintf(`flamingo v%s [%s]`, Version, BuildDate),
+	Long:  fmt.Sprintf(`flamingo v%s`, Version),
 	Args:  cobra.ArbitraryArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		startCapture(cmd, args)
