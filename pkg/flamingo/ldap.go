@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/nmcclain/ldap"
+	"github.com/atredispartners/flamingo/pkg/ldap"
 	log "github.com/sirupsen/logrus"
 )
 
