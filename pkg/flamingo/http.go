@@ -305,6 +305,9 @@ func ntlmToHashcat(h *ntlm.AuthenticateMessage, ntlmVer int) (out string) {
 		out = fmt.Sprintf(template, un, ws, lm, nt, ch)
 	} else {
 		v2 := h.NtChallengeResponseFields.String()
+		if len(v2) < 64 {
+			v2 = "0000000000000000000000000000000000000000000000000000000000000000"
+		}
 		lm := v2[0:31]
 		nt := v2[32 : len(v2)-1]
 		out = fmt.Sprintf(template, un, dn, ch, lm, nt)
