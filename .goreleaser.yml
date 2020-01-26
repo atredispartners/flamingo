@@ -19,7 +19,7 @@ builds:
       - freebsd
     goarch:
       - amd64
-      - i386
+      - 386
       - arm
       - arm64
     goarm:
