@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	syslog "github.com/RackSec/srslog"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/signal"
@@ -55,6 +55,9 @@ func startCapture(cmd *cobra.Command, args []string) {
 	if !params.Quiet {
 		fmt.Fprintf(os.Stderr, "flamingo %s is waiting to feed...\n", Version)
 	}
+
+	// Bump the process file limit if possible
+	flamingo.IncreaseFileLimit()
 
 	done := false
 	sigs := make(chan os.Signal, 1)
@@ -291,24 +294,24 @@ func getSyslogWriter(url string) (flamingo.OutputWriter, flamingo.OutputCleaner,
 	case 3:
 		switch bits[1] {
 		case "unix":
-			syslogWriter, err = syslog.Dial("", bits[2], syslog.LOG_ALERT, "flamingo")	
+			syslogWriter, err = syslog.Dial("", bits[2], syslog.LOG_ALERT, "flamingo")
 		case "udp", "tcp", "tcp+tls":
-			syslogWriter, err = syslog.Dial(bits[1], fmt.Sprintf("%s:514", bits[2]), syslog.LOG_ALERT, "flamingo")	
+			syslogWriter, err = syslog.Dial(bits[1], fmt.Sprintf("%s:514", bits[2]), syslog.LOG_ALERT, "flamingo")
 		default:
 			syslogWriter, err = syslog.Dial("udp", fmt.Sprintf("%s:%s", bits[1], bits[2]), syslog.LOG_ALERT, "flamingo")
 		}
-			
+
 	case 4:
 		switch bits[1] {
 		case "unix":
-			syslogWriter, err = syslog.Dial("", bits[2], syslog.LOG_ALERT, "flamingo")	
+			syslogWriter, err = syslog.Dial("", bits[2], syslog.LOG_ALERT, "flamingo")
 		case "udp", "tcp", "tcp+tls":
-			syslogWriter, err = syslog.Dial(bits[1], fmt.Sprintf("%s:%s", bits[2], bits[3]), syslog.LOG_ALERT, "flamingo")	
+			syslogWriter, err = syslog.Dial(bits[1], fmt.Sprintf("%s:%s", bits[2], bits[3]), syslog.LOG_ALERT, "flamingo")
 		default:
-			err = fmt.Errorf("unsupported syslog transport %s", bits[1])	
+			err = fmt.Errorf("unsupported syslog transport %s", bits[1])
 		}
 	default:
-		err = fmt.Errorf("unsupported syslog destination %s", url)	
+		err = fmt.Errorf("unsupported syslog destination %s", url)
 	}
 
 	if err != nil {
@@ -326,7 +329,7 @@ func getSyslogWriter(url string) (flamingo.OutputWriter, flamingo.OutputCleaner,
 			return err
 		}
 		return sendSyslog(syslogWriter, string(bytes))
-	},  func() { syslogWriter.Close() }, nil
+	}, func() { syslogWriter.Close() }, nil
 }
 
 func setupTLS() {
