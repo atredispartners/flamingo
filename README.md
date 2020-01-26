@@ -22,7 +22,7 @@ $ go get -u -v github.com/atredispartners/flamingo && \
 
 2. Run the binary and collect credentials
 ```
-C:\> flamingo.exe --ignore
+C:\> flamingo.exe
 
 {"_etime":"2020-01-10T17:56:51Z","_host":"1.2.3.4:18301","_proto":"ssh","method":"pubkey","pubkey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPVSxqrWfNle0nnJrKS3NA12uhu9PHxnP4OlD843tRz/","pubkey-sha256":"SHA256:/7UkXjk0XtBe9N6RrAGGgJTGuKKi1Hgk3E+4TPo54Cw","username":"devuser","version":"SSH-2.0-OpenSSH_for_Windows_7.7"}
 
@@ -37,8 +37,6 @@ The default is to log credentials to standard output and append to `flamingo.log
 ## Options
 
 Use `--protocols` to configure a list of enabled protocol listeners
-
-Use `--ignore` to ignore errors when binding to specific ports, continuing with what is available.
 
 Use additional options to specify ports and protocol options for listeners.
 

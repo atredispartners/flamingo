@@ -133,13 +133,19 @@ func httpHandler(c *ConfHTTP) http.HandlerFunc {
 			}
 		}
 
+		pname := "http"
+		if c.TLS {
+			pname = "https"
+		}
+
 		log.WithFields(log.Fields{
 			"_server":       fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
 			"_src":          r.RemoteAddr,
+			"_protocol":     pname,
 			"agent":         r.UserAgent(),
 			"url":           r.RequestURI,
 			"authorization": r.Header.Get("Authorization"),
-		}).Debugf("access")
+		}).Infof("access")
 	}
 }
 

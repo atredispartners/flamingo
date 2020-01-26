@@ -14,27 +14,27 @@ var ToolName = "flamingo"
 var Version = "0.0.0"
 
 type flamingoParameters struct {
-	Quiet          bool
-	Verbose        bool
-	IgnoreFailures bool
-	DNSPorts       string
-	DNSResolveToIP string
-	SNMPPorts      string
-	SSHPorts       string
-	SSHHostKey     string
-	LDAPPorts      string
-	LDAPSPorts     string
-	HTTPPorts      string
-	HTTPSPorts     string
-	HTTPBasicRealm string
-	HTTPAuthMode   string
-	TLSCertFile    string
-	TLSCertData    string
-	TLSKeyFile     string
-	TLSKeyData     string
-	TLSName        string
-	TLSOrgName     string
-	Protocols      string
+	Quiet              bool
+	Verbose            bool
+	DontIgnoreFailures bool
+	DNSPorts           string
+	DNSResolveToIP     string
+	SNMPPorts          string
+	SSHPorts           string
+	SSHHostKey         string
+	LDAPPorts          string
+	LDAPSPorts         string
+	HTTPPorts          string
+	HTTPSPorts         string
+	HTTPBasicRealm     string
+	HTTPAuthMode       string
+	TLSCertFile        string
+	TLSCertData        string
+	TLSKeyFile         string
+	TLSKeyData         string
+	TLSName            string
+	TLSOrgName         string
+	Protocols          string
 }
 
 var params = &flamingoParameters{}
@@ -62,7 +62,7 @@ func init() {
 	// General options
 	rootCmd.PersistentFlags().BoolVarP(&params.Verbose, "verbose", "v", false, "Display verbose output")
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
-	rootCmd.PersistentFlags().BoolVarP(&params.IgnoreFailures, "ignore", "I", false, "Ignore individual listener failures")
+	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "--dont-ignore", "", false, "Treat individual listener failure as fatal")
 
 	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns", "Specify a comma-separated list of protocols")
 

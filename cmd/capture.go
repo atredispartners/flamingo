@@ -308,7 +308,7 @@ func setupSSH(rw *flamingo.RecordWriter) {
 		sshConf.BindPort = uint16(port)
 		sshConf.RecordWriter = rw
 		if err := flamingo.SpawnSSH(sshConf); err != nil {
-			if !params.IgnoreFailures {
+			if params.DontIgnoreFailures {
 				log.Fatalf("failed to start ssh server %s:%d: %s", sshConf.BindHost, sshConf.BindPort, err)
 			} else {
 				log.Errorf("failed to start ssh server %s:%d: %s", sshConf.BindHost, sshConf.BindPort, err)
@@ -334,7 +334,7 @@ func setupSNMP(rw *flamingo.RecordWriter) {
 		snmpConf.BindPort = uint16(port)
 		snmpConf.RecordWriter = rw
 		if err := flamingo.SpawnSNMP(snmpConf); err != nil {
-			if !params.IgnoreFailures {
+			if params.DontIgnoreFailures {
 				log.Fatalf("failed to start snmp server %s:%d: %s", snmpConf.BindHost, snmpConf.BindPort, err)
 			} else {
 				log.Errorf("failed to start snmb server %s:%d: %s", snmpConf.BindHost, snmpConf.BindPort, err)
@@ -360,7 +360,7 @@ func setupLDAP(rw *flamingo.RecordWriter) {
 		ldapConf.BindPort = uint16(port)
 		ldapConf.RecordWriter = rw
 		if err := flamingo.SpawnLDAP(ldapConf); err != nil {
-			if !params.IgnoreFailures {
+			if params.DontIgnoreFailures {
 				log.Fatalf("failed to start ldap server %s:%d: %s", ldapConf.BindHost, ldapConf.BindPort, err)
 			} else {
 				log.Errorf("failed to start ldap server %s:%d: %s", ldapConf.BindHost, ldapConf.BindPort, err)
@@ -390,7 +390,7 @@ func setupLDAPS(rw *flamingo.RecordWriter) {
 		ldapConf.TLSKey = params.TLSKeyData
 		ldapConf.TLSName = params.TLSName
 		if err := flamingo.SpawnLDAP(ldapConf); err != nil {
-			if !params.IgnoreFailures {
+			if params.DontIgnoreFailures {
 				log.Fatalf("failed to start ldaps server %s:%d: %q", ldapConf.BindHost, ldapConf.BindPort, err)
 			} else {
 				log.Errorf("failed to start ldaps server %s:%d: %q", ldapConf.BindHost, ldapConf.BindPort, err)
@@ -418,7 +418,7 @@ func setupHTTP(rw *flamingo.RecordWriter) {
 		httpConf.BasicRealm = params.HTTPBasicRealm
 		httpConf.AuthMode = params.HTTPAuthMode
 		if err := flamingo.SpawnHTTP(httpConf); err != nil {
-			if !params.IgnoreFailures {
+			if params.DontIgnoreFailures {
 				log.Fatalf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
 			} else {
 				log.Errorf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
@@ -450,7 +450,7 @@ func setupHTTPS(rw *flamingo.RecordWriter) {
 		httpConf.TLSName = params.TLSName
 		httpConf.AuthMode = params.HTTPAuthMode
 		if err := flamingo.SpawnHTTP(httpConf); err != nil {
-			if !params.IgnoreFailures {
+			if params.DontIgnoreFailures {
 				log.Fatalf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
 			} else {
 				log.Errorf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
@@ -476,7 +476,7 @@ func setupDNS(rw *flamingo.RecordWriter) {
 		dnsConf.RecordWriter = rw
 		dnsConf.ResolveToIP = params.DNSResolveToIP
 		if err := flamingo.SpawnDNS(dnsConf); err != nil {
-			if !params.IgnoreFailures {
+			if params.DontIgnoreFailures {
 				log.Fatalf("failed to start dns server %s:%d: %q", dnsConf.BindHost, dnsConf.BindPort, err)
 			} else {
 				log.Errorf("failed to start dns server %s:%d: %q", dnsConf.BindHost, dnsConf.BindPort, err)

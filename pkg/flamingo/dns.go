@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/miekg/dns"
+	log "github.com/sirupsen/logrus"
 )
 
 var dnsTypeMap = map[uint16]string{
@@ -133,14 +134,13 @@ func newDNSHandler(c *ConfDNS) func(w dns.ResponseWriter, req *dns.Msg) {
 	return func(w dns.ResponseWriter, req *dns.Msg) {
 		remoteAddr := w.RemoteAddr()
 		for _, q := range req.Question {
-			c.RecordWriter.Record(
-				"dns",
-				remoteAddr.String(),
-				map[string]string{
-					"name": q.Name,
-					"type": dnsTypeMap[q.Qtype],
-				},
-			)
+			log.WithFields(log.Fields{
+				"_server":   fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
+				"_src":      remoteAddr.String(),
+				"_protocol": "dns",
+				"name":      q.Name,
+				"type":      dnsTypeMap[q.Qtype],
+			}).Infof("access")
 		}
 		if c.ResolveToIP == "" || len(req.Question) == 0 || req.Question[0].Qtype != dns.TypeA {
 			dns.HandleFailed(w, req)
