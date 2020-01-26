@@ -92,4 +92,4 @@ The following formats are supported:
  * Initial requirements by [Chris Bellows](https://github.com/chris-atredis)
  * Project creation and maintenance by [HD Moore](https://github.com/hdm)
  * NTLM support for HTTP by [Alex Flores](https://github.com/audibleblink)
- * DNS support by [Tom Steele](https://github.com/tomsteele)
+ * DNS & FTP support by [Tom Steele](https://github.com/tomsteele)
