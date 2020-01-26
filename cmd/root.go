@@ -17,6 +17,8 @@ type flamingoParameters struct {
 	Quiet          bool
 	Verbose        bool
 	IgnoreFailures bool
+	DNSPorts       string
+	DNSResolveToIP string
 	SNMPPorts      string
 	SSHPorts       string
 	SSHHostKey     string
@@ -62,7 +64,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
 	rootCmd.PersistentFlags().BoolVarP(&params.IgnoreFailures, "ignore", "I", false, "Ignore individual listener failures")
 
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http", "Specify a comma-separated list of protocols")
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -75,6 +77,10 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.LDAPPorts, "ldap-ports", "", "389", "The list of TCP ports to listen on for LDAP")
 	rootCmd.Flags().StringVarP(&params.LDAPSPorts, "ldaps-ports", "", "636", "The list of TCP ports to listen on for LDAPS")
 
+	// DNS parameters
+	rootCmd.Flags().StringVarP(&params.DNSPorts, "dns-ports", "", "53", "The list of UDP ports to listen on for DNS")
+	rootCmd.Flags().StringVarP(&params.DNSResolveToIP, "dns-resolve-to", "", "", "The IP address used to respond to DNS Type A question. If empty, no response will be sent")
+
 	// HTTP(S) parameters
 	rootCmd.Flags().StringVarP(&params.HTTPPorts, "http-ports", "", "80", "The list of TCP ports to listen on for HTTP")
 	rootCmd.Flags().StringVarP(&params.HTTPSPorts, "https-ports", "", "443", "The list of TCP ports to listen on for HTTPS")
@@ -85,5 +91,4 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.TLSKeyFile, "tls-key", "", "", "An optional x509 key for TLS listeners")
 	rootCmd.Flags().StringVarP(&params.TLSName, "tls-name", "", "localhost", "A server name to use with TLS listeners")
 	rootCmd.Flags().StringVarP(&params.TLSOrgName, "tls-org", "", "Flamingo Feed, Inc.", "An organization to use for self-signed certificates")
-
 }
