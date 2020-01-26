@@ -3,6 +3,7 @@ module github.com/atredispartners/flamingo
 go 1.13
 
 require (
+	github.com/RackSec/srslog v0.0.0-20180709174129-a4725f04ec91
 	github.com/audibleblink/go-ntlm v0.0.0-20190308023621-c1bc43845e23
 	github.com/golang/mock v1.4.0 // indirect
 	github.com/hdm/gosnmp v0.0.0-20191201190541-fbffabc0d968

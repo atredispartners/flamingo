@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	syslog "github.com/RackSec/srslog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -192,6 +193,18 @@ func setupOutput(outputs []string) *flamingo.RecordWriter {
 			continue
 		}
 
+		if strings.HasPrefix(output, "syslog:") || output == "syslog" {
+			writer, cleaner, err := getSyslogWriter(output)
+			if err != nil {
+				log.Fatalf("failed to configure output %s: %s", output, err)
+			}
+			rw.OutputWriters = append(rw.OutputWriters, writer)
+			if cleaner != nil {
+				rw.OutputCleaners = append(rw.OutputCleaners, cleaner)
+			}
+			continue
+		}
+
 		// Assume anything else is a file output
 		writer, cleaner, err := getFileWriter(output)
 		if err != nil {
@@ -250,6 +263,65 @@ func getWebhookWriter(url string) (flamingo.OutputWriter, flamingo.OutputCleaner
 		}
 		return sendWebhook(url, string(bytes))
 	}, flamingo.OutputCleanerNoOp, nil
+}
+
+func getSyslogWriter(url string) (flamingo.OutputWriter, flamingo.OutputCleaner, error) {
+
+	var syslogWriter *syslog.Writer
+	var err error
+
+	// Supported formats
+	// - syslog:unix:/dev/log
+	// - syslog:host:port
+	// - syslog:udp:host
+	// - syslog:udp:host:port
+	// - syslog:tcp:host:port
+
+	bits := strings.Split(url, ":")
+	switch len(bits) {
+	case 1:
+		syslogWriter, err = syslog.Dial("", "", syslog.LOG_ALERT, "flamingo")
+	case 2:
+		syslogWriter, err = syslog.Dial("udp", fmt.Sprintf("%s:514", bits[1]), syslog.LOG_ALERT, "flamingo")
+	case 3:
+		switch bits[1] {
+		case "unix":
+			syslogWriter, err = syslog.Dial("", bits[2], syslog.LOG_ALERT, "flamingo")	
+		case "udp", "tcp", "tcp+tls":
+			syslogWriter, err = syslog.Dial(bits[1], fmt.Sprintf("%s:514", bits[2]), syslog.LOG_ALERT, "flamingo")	
+		default:
+			syslogWriter, err = syslog.Dial("udp", fmt.Sprintf("%s:%s", bits[1], bits[2]), syslog.LOG_ALERT, "flamingo")
+		}
+			
+	case 4:
+		switch bits[1] {
+		case "unix":
+			syslogWriter, err = syslog.Dial("", bits[2], syslog.LOG_ALERT, "flamingo")	
+		case "udp", "tcp", "tcp+tls":
+			syslogWriter, err = syslog.Dial(bits[1], fmt.Sprintf("%s:%s", bits[2], bits[3]), syslog.LOG_ALERT, "flamingo")	
+		default:
+			err = fmt.Errorf("unsupported syslog transport %s", bits[1])	
+		}
+	default:
+		err = fmt.Errorf("unsupported syslog destination %s", url)	
+	}
+
+	if err != nil {
+		return flamingo.OutputWriterNoOp, flamingo.OutputCleanerNoOp, err
+	}
+
+	err = syslogWriter.Debug("flamingo is starting up")
+	if err != nil {
+		return flamingo.OutputWriterNoOp, flamingo.OutputCleanerNoOp, err
+	}
+
+	return func(rec map[string]string) error {
+		bytes, err := json.Marshal(rec)
+		if err != nil {
+			return err
+		}
+		return sendSyslog(syslogWriter, string(bytes))
+	},  func() { syslogWriter.Close() }, nil
 }
 
 func setupTLS() {
@@ -509,4 +581,8 @@ func sendWebhook(url string, msg string) error {
 	}
 
 	return nil
+}
+
+func sendSyslog(w *syslog.Writer, msg string) error {
+	return w.Alert(msg)
 }
