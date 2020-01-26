@@ -242,7 +242,13 @@ func stdoutWriter(rec map[string]string) error {
 		rtype = "credential"
 	}
 
-	log.WithFields(lf).Info(rtype)
+	switch rtype {
+	case "credential":
+		log.WithFields(lf).Warn(rtype)
+	default:
+		log.WithFields(lf).Info(rtype)
+	}
+
 	return nil
 }
 
@@ -329,11 +335,24 @@ func getSyslogWriter(url string) (flamingo.OutputWriter, flamingo.OutputCleaner,
 	}
 
 	return func(rec map[string]string) error {
-		bytes, err := json.Marshal(rec)
+		msg, err := json.Marshal(rec)
 		if err != nil {
 			return err
 		}
-		return sendSyslog(syslogWriter, string(bytes))
+
+		rtype := rec["_type"]
+		if rtype == "" {
+			rtype = "credential"
+		}
+
+		switch rtype {
+		case "credential":
+			syslogWriter.Alert(string(msg))
+		default:
+			syslogWriter.Info(string(msg))
+		}
+
+		return nil
 	}, func() { syslogWriter.Close() }, nil
 }
 
@@ -594,8 +613,4 @@ func sendWebhook(url string, msg string) error {
 	}
 
 	return nil
-}
-
-func sendSyslog(w *syslog.Writer, msg string) error {
-	return w.Alert(msg)
 }
