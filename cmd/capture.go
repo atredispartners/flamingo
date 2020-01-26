@@ -128,6 +128,11 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupDNS(rw)
 	}
 
+	// FTP
+	if _, enabled := protocols["ftp"]; enabled {
+		setupFTP(rw)
+	}
+
 	// Make sure at least one capture is running
 	if protocolCount == 0 {
 		log.Fatalf("at least one protocol must be enabled")
@@ -589,6 +594,31 @@ func setupDNS(rw *flamingo.RecordWriter) {
 		}
 		protocolCount++
 		cleanupHandlers = append(cleanupHandlers, func() { dnsConf.Shutdown() })
+	}
+}
+
+func setupFTP(rw *flamingo.RecordWriter) {
+
+	// Create a listner for each port
+	ftpPorts, err := flamingo.CrackPorts(params.FTPPorts)
+	if err != nil {
+		log.Fatal("failed to process ftp ports %s: %s", params.FTPPorts, err)
+	}
+
+	for _, port := range ftpPorts {
+		ftpConf := flamingo.NewConfFTP()
+		ftpConf.BindPort = uint16(port)
+		ftpConf.RecordWriter = rw
+		if err := flamingo.SpawnFTP(ftpConf); err != nil {
+			if params.DontIgnoreFailures {
+				log.Fatalf("failed to start dns server %s:%d: %q", ftpConf.BindHost, ftpConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start dns server %s:%d: %q", ftpConf.BindHost, ftpConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { ftpConf.Shutdown() })
 	}
 }
 
