@@ -117,7 +117,7 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupLDAPS(rw)
 	}
 
-	// LDAP/LDAPS
+	// HTTP/HTTPS
 	if _, enabled := protocols["http"]; enabled {
 		setupHTTP(rw)
 		setupHTTPS(rw)
@@ -237,7 +237,12 @@ func stdoutWriter(rec map[string]string) error {
 		lf[k] = v
 	}
 
-	log.WithFields(lf).Info("credential")
+	rtype := rec["_type"]
+	if rtype == "" {
+		rtype = "credential"
+	}
+
+	log.WithFields(lf).Info(rtype)
 	return nil
 }
 

@@ -51,6 +51,7 @@ func (c *ConfLDAP) Bind(bindDN string, pass string, conn net.Conn) (ldap.LDAPRes
 	}
 
 	c.RecordWriter.Record(
+		"credential",
 		pname,
 		conn.RemoteAddr().String(),
 		map[string]string{

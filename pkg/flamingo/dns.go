@@ -3,94 +3,94 @@ package flamingo
 import (
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/miekg/dns"
-	log "github.com/sirupsen/logrus"
 )
 
 var dnsTypeMap = map[uint16]string{
-	0:     "TypeNone",
-	1:     "TypeA",
-	2:     "TypeNS",
-	3:     "TypeMD",
-	4:     "TypeMF",
-	5:     "TypeCNAME",
-	6:     "TypeSOA",
-	7:     "TypeMB",
-	8:     "TypeMG",
-	9:     "TypeMR",
-	10:    "TypeNULL",
-	12:    "TypePTR",
-	13:    "TypeHINFO",
-	14:    "TypeMINFO",
-	15:    "TypeMX",
-	16:    "TypeTXT",
-	17:    "TypeRP",
-	18:    "TypeAFSDB",
-	19:    "TypeX25",
-	20:    "TypeISDN",
-	21:    "TypeRT",
-	23:    "TypeNSAPPTR",
-	24:    "TypeSIG",
-	25:    "TypeKEY",
-	26:    "TypePX",
-	27:    "TypeGPOS",
-	28:    "TypeAAAA",
-	29:    "TypeLOC",
-	30:    "TypeNXT",
-	31:    "TypeEID",
-	32:    "TypeNIMLOC",
-	33:    "TypeSRV",
-	34:    "TypeATMA",
-	35:    "TypeNAPTR",
-	36:    "TypeKX",
-	37:    "TypeCERT",
-	39:    "TypeDNAME",
-	41:    "TypeOPT",
-	42:    "TypeAPL",
-	43:    "TypeDS",
-	44:    "TypeSSHFP",
-	46:    "TypeRRSIG",
-	47:    "TypeNSEC",
-	48:    "TypeDNSKEY",
-	49:    "TypeDHCID",
-	50:    "TypeNSEC3",
-	51:    "TypeNSEC3PARAM",
-	52:    "TypeTLSA",
-	53:    "TypeSMIMEA",
-	55:    "TypeHIP",
-	56:    "TypeNINFO",
-	57:    "TypeRKEY",
-	58:    "TypeTALINK",
-	59:    "TypeCDS",
-	60:    "TypeCDNSKEY",
-	61:    "TypeOPENPGPKEY",
-	62:    "TypeCSYNC",
-	99:    "TypeSPF",
-	100:   "TypeUINFO",
-	101:   "TypeUID",
-	102:   "TypeGID",
-	103:   "TypeUNSPEC",
-	104:   "TypeNID",
-	105:   "TypeL32",
-	106:   "TypeL64",
-	107:   "TypeLP",
-	108:   "TypeEUI48",
-	109:   "TypeEUI64",
-	256:   "TypeURI",
-	257:   "TypeCAA",
-	258:   "TypeAVC",
-	249:   "TypeTKEY",
-	250:   "TypeTSIG",
-	251:   "TypeIXFR",
-	252:   "TypeAXFR",
-	253:   "TypeMAILB",
-	254:   "TypeMAILA",
-	255:   "TypeANY",
-	32768: "TypeTA",
-	32769: "TypeDLV",
-	65535: "TypeReserved",
+	0:     "None",
+	1:     "A",
+	2:     "NS",
+	3:     "MD",
+	4:     "MF",
+	5:     "CNAME",
+	6:     "SOA",
+	7:     "MB",
+	8:     "MG",
+	9:     "MR",
+	10:    "NULL",
+	12:    "PTR",
+	13:    "HINFO",
+	14:    "MINFO",
+	15:    "MX",
+	16:    "TXT",
+	17:    "RP",
+	18:    "AFSDB",
+	19:    "X25",
+	20:    "ISDN",
+	21:    "RT",
+	23:    "NSAPPTR",
+	24:    "SIG",
+	25:    "KEY",
+	26:    "PX",
+	27:    "GPOS",
+	28:    "AAAA",
+	29:    "LOC",
+	30:    "NXT",
+	31:    "EID",
+	32:    "NIMLOC",
+	33:    "SRV",
+	34:    "ATMA",
+	35:    "NAPTR",
+	36:    "KX",
+	37:    "CERT",
+	39:    "DNAME",
+	41:    "OPT",
+	42:    "APL",
+	43:    "DS",
+	44:    "SSHFP",
+	46:    "RRSIG",
+	47:    "NSEC",
+	48:    "DNSKEY",
+	49:    "DHCID",
+	50:    "NSEC3",
+	51:    "NSEC3PARAM",
+	52:    "TLSA",
+	53:    "SMIMEA",
+	55:    "HIP",
+	56:    "NINFO",
+	57:    "RKEY",
+	58:    "TALINK",
+	59:    "CDS",
+	60:    "CDNSKEY",
+	61:    "OPENPGPKEY",
+	62:    "CSYNC",
+	99:    "SPF",
+	100:   "UINFO",
+	101:   "UID",
+	102:   "GID",
+	103:   "UNSPEC",
+	104:   "NID",
+	105:   "L32",
+	106:   "L64",
+	107:   "LP",
+	108:   "EUI48",
+	109:   "EUI64",
+	256:   "URI",
+	257:   "CAA",
+	258:   "AVC",
+	249:   "TKEY",
+	250:   "TSIG",
+	251:   "IXFR",
+	252:   "AXFR",
+	253:   "MAILB",
+	254:   "MAILA",
+	255:   "ANY",
+	32768: "TA",
+	32769: "DLV",
+	65535: "Reserved",
 }
 
 // ConfDNS describes the configuration of the dns service
@@ -121,44 +121,55 @@ func (c *ConfDNS) Shutdown() {
 	c.server.Shutdown()
 }
 
+// ServeDNS handles DNS requests
+func (c *ConfDNS) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
+	remoteAddr := w.RemoteAddr()
+	questions := []string{}
+	for _, q := range req.Question {
+		qtype := dnsTypeMap[q.Qtype]
+		if qtype == "" {
+			qtype = fmt.Sprintf("%d", q.Qtype)
+		}
+		questions = append(questions, fmt.Sprintf("%s/%s", qtype, q.Name))
+	}
+
+	if len(questions) > 0 {
+		c.RecordWriter.Record(
+			"access",
+			"dns",
+			remoteAddr.String(),
+			map[string]string{
+				"_server":   fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
+				"questions": strings.Join(questions, " "),
+			},
+		)
+	}
+
+	if c.ResolveToIP == "" || len(req.Question) == 0 || req.Question[0].Qtype != dns.TypeA {
+		dns.HandleFailed(w, req)
+		return
+	}
+	m := dns.Msg{}
+	m.SetReply(req)
+	m.Extra = make([]dns.RR, 1)
+	m.Extra[0] = &dns.A{
+		Hdr: dns.RR_Header{
+			Name:   m.Question[0].Name,
+			Rrtype: dns.TypeA,
+			Class:  dns.ClassINET,
+			Ttl:    0,
+		},
+		A: net.ParseIP(c.ResolveToIP),
+	}
+	w.WriteMsg(&m)
+}
+
 // NewConfDNS creates a default configuration for the DNS capture server.
 func NewConfDNS() *ConfDNS {
 	return &ConfDNS{
 		BindPort: 53,
 		BindHost: "[::]",
 		Network:  "udp",
-	}
-}
-
-func newDNSHandler(c *ConfDNS) func(w dns.ResponseWriter, req *dns.Msg) {
-	return func(w dns.ResponseWriter, req *dns.Msg) {
-		remoteAddr := w.RemoteAddr()
-		for _, q := range req.Question {
-			log.WithFields(log.Fields{
-				"_server":   fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
-				"_src":      remoteAddr.String(),
-				"_protocol": "dns",
-				"name":      q.Name,
-				"type":      dnsTypeMap[q.Qtype],
-			}).Infof("access")
-		}
-		if c.ResolveToIP == "" || len(req.Question) == 0 || req.Question[0].Qtype != dns.TypeA {
-			dns.HandleFailed(w, req)
-			return
-		}
-		m := dns.Msg{}
-		m.SetReply(req)
-		m.Extra = make([]dns.RR, 1)
-		m.Extra[0] = &dns.A{
-			Hdr: dns.RR_Header{
-				Name:   m.Question[0].Name,
-				Rrtype: dns.TypeA,
-				Class:  dns.ClassINET,
-				Ttl:    0,
-			},
-			A: net.ParseIP(c.ResolveToIP),
-		}
-		w.WriteMsg(&m)
 	}
 }
 
@@ -171,6 +182,7 @@ func SpawnDNS(c *ConfDNS) error {
 			Net:               c.Network,
 			Addr:              addr,
 			NotifyStartedFunc: func() { close(wait) },
+			Handler:           c,
 		}
 		fin := make(chan error, 1)
 		go func() {
@@ -184,7 +196,7 @@ func SpawnDNS(c *ConfDNS) error {
 		}
 		return srv, errFromServer
 	}
-	dns.HandleFunc(".", newDNSHandler(c))
+
 	server, err := startServer(addr)
 	c.server = server
 	return err

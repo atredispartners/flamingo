@@ -118,7 +118,7 @@ func snmpProcessData(c *ConfSNMP, raddr net.Addr, data []byte) {
 		// - Handle SNMP v3
 		// - Handle SNMP Traps
 
-		c.RecordWriter.Record("snmp", raddr.String(), map[string]string{
+		c.RecordWriter.Record("credential", "snmp", raddr.String(), map[string]string{
 			"community": res.Community,
 			"version":   res.Version.String(),
 			"_server":   fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),

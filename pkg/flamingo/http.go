@@ -138,14 +138,17 @@ func httpHandler(c *ConfHTTP) http.HandlerFunc {
 			pname = "https"
 		}
 
-		log.WithFields(log.Fields{
-			"_server":       fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
-			"_src":          r.RemoteAddr,
-			"_protocol":     pname,
-			"agent":         r.UserAgent(),
-			"url":           r.RequestURI,
-			"authorization": r.Header.Get("Authorization"),
-		}).Infof("access")
+		c.RecordWriter.Record(
+			"access",
+			pname,
+			r.RemoteAddr,
+			map[string]string{
+				"_server":       fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
+				"agent":         r.UserAgent(),
+				"url":           r.RequestURI,
+				"authorization": r.Header.Get("Authorization"),
+			},
+		)
 	}
 }
 
@@ -181,6 +184,7 @@ func httpHandleBasicAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) bo
 	}
 
 	c.RecordWriter.Record(
+		"credential",
 		pname,
 		r.RemoteAddr,
 		map[string]string{
@@ -248,6 +252,7 @@ func httpHandleNTLMAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok
 				pname = "https"
 			}
 			c.RecordWriter.Record(
+				"credential",
 				pname,
 				r.RemoteAddr,
 				map[string]string{

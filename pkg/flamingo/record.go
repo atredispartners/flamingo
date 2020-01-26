@@ -44,9 +44,10 @@ func NewRecordWriter() *RecordWriter {
 }
 
 // Record writes a credential to the output writers
-func (r *RecordWriter) Record(proto string, source string, params map[string]string) {
+func (r *RecordWriter) Record(rtype string, proto string, source string, params map[string]string) {
 	rec := make(map[string]string)
 	rec["_etime"] = time.Now().Format(time.RFC3339)
+	rec["_type"] = rtype
 	rec["_host"] = source
 	rec["_proto"] = proto
 	for k, v := range params {

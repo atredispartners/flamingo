@@ -55,6 +55,7 @@ func NewConfSSH() *ConfSSH {
 func getSSHHandlePassword(c *ConfSSH) func(ssh.ConnMetadata, []byte) (*ssh.Permissions, error) {
 	return func(sshConn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 		c.RecordWriter.Record(
+			"credential",
 			"ssh",
 			sshConn.RemoteAddr().String(),
 			map[string]string{
@@ -72,6 +73,7 @@ func getSSHHandlePassword(c *ConfSSH) func(ssh.ConnMetadata, []byte) (*ssh.Permi
 func getSSHHandlePublic(c *ConfSSH) func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
 	return func(sshConn ssh.ConnMetadata, pubkey ssh.PublicKey) (*ssh.Permissions, error) {
 		c.RecordWriter.Record(
+			"credential",
 			"ssh",
 			sshConn.RemoteAddr().String(),
 			map[string]string{
