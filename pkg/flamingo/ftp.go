@@ -48,30 +48,30 @@ func SpawnFTP(c *ConfFTP) error {
 		return err
 	}
 	c.listener = listener
-	go startFTP(c)
+	go ftpStart(c)
 	return nil
 }
 
-func startFTP(c *ConfFTP) {
-	for {
+func ftpStart(c *ConfFTP) {
+	for !c.IsShutdown() {
 		conn, err := c.listener.Accept()
 		if err != nil {
 			continue
 		}
-		go serveFTP(c, conn)
+		go ftpHandleConnection(c, conn)
 	}
 }
 
-func createFTPMessage(code int, msg string) string {
+func ftpCreateMessage(code int, msg string) string {
 	return fmt.Sprintf("%d %s\r\n", code, msg)
 }
 
-func serveFTP(c *ConfFTP, conn net.Conn) {
+func ftpHandleConnection(c *ConfFTP, conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
 
-	writer.WriteString(createFTPMessage(220, "Welcome to FTP server."))
+	writer.WriteString(ftpCreateMessage(220, "Welcome to FTP server."))
 	writer.Flush()
 	var (
 		username string
@@ -93,14 +93,14 @@ func serveFTP(c *ConfFTP, conn net.Conn) {
 		switch command {
 		case "USER":
 			username = msg
-			writer.WriteString(createFTPMessage(331, "Username ok, password required"))
+			writer.WriteString(ftpCreateMessage(331, "Username ok, password required"))
 			writer.Flush()
 		case "PASS":
 			password = msg
-			writer.WriteString(createFTPMessage(230, "Password ok, continue"))
+			writer.WriteString(ftpCreateMessage(230, "Password ok, continue"))
 			writer.Flush()
 		default:
-			writer.WriteString(createFTPMessage(500, "Command not found"))
+			writer.WriteString(ftpCreateMessage(500, "Command not found"))
 			writer.Flush()
 			break
 		}

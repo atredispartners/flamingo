@@ -2,7 +2,7 @@
 
 A filter-feeding bird. Captures credentials sprayed across the network by various IT and security products.
 
-Currently supports SSH, HTTP, LDAP, DNS, and SNMP credential collection.
+Currently supports SSH, HTTP, LDAP, DNS, FTP, and SNMP credential collection.
 
 Pull requests are encouraged for additional protocols and output destinations.
 
