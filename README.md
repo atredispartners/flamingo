@@ -42,12 +42,6 @@ Use additional options to specify ports and protocol options for listeners.
 
 All additional command-line arguments are output destinations.
 
-Supported outputs:
-
- * `-` or no arguments results in output being written to standard output
- * http://[url] or https://[url] will deliver results via webhook (slack, mattermost, etc)
- * anything else is treated as an output file name
-
 ## Outputs
 
 flamingo can write recorded credentials to a variety of output formats. By default, flamingo will log to `flamingo.log` and standard output.
