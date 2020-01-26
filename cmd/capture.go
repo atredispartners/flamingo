@@ -271,11 +271,16 @@ func getSyslogWriter(url string) (flamingo.OutputWriter, flamingo.OutputCleaner,
 	var err error
 
 	// Supported formats
-	// - syslog:unix:/dev/log
-	// - syslog:host:port
-	// - syslog:udp:host
-	// - syslog:udp:host:port
-	// - syslog:tcp:host:port
+	// - syslog - send to the default syslog output, typically a unix socket
+	// - syslog:unix:/dev/log - send to a specific unix stream socket
+	// - syslog:host - send to the specified host using udp and port 514
+	// - syslog:host:port - send to the specified host using udp and the specified port
+	// - syslog:udp:host - send to the specified host using udp and port 514
+	// - syslog:udp:host:port - send to the specified host using udp and the specified port
+	// - syslog:tcp:host - send to the specified host using tcp and port 514
+	// - syslog:tcp:host:port - send to the specified host using tcp and the specified port
+	// - syslog:tcp+tls:host - send to the specified host using tls over tcp and port 514
+	// - syslog:tcp+tls:host:port - send to the specified host using tls over tcp and the specified port
 
 	bits := strings.Split(url, ":")
 	switch len(bits) {

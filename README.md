@@ -48,6 +48,50 @@ Supported outputs:
  * http://[url] or https://[url] will deliver results via webhook (slack, mattermost, etc)
  * anything else is treated as an output file name
 
+## Outputs
+
+flamingo can write recorded credentials to a variety of output formats. By default, flamingo will log to `flamingo.log` and standard output.
+
+### Standard Output
+
+Specifying `-` or `stdout` will result in flamingo only logging to standard output.
+
+### File Destinations
+
+Specifying one or more file paths will result in flamingo appending to these files.
+
+### HTTP Destinations
+
+Specifying HTTP or HTTPS URLs will result in flamingo sending a webhook POST request to each endpoint.
+
+By default, this format supports platforms like Slack and Mattermost that support inbound webhooks.
+
+The actual HTTP POST looks like:
+
+```
+POST /specified-url
+Content-Type: application/json
+User-Agent: flamingo/v0.0.0
+
+{"text": "full-json-output of credential report"}
+```
+
+### Syslog Destinations
+
+Specifying `syslog` or `syslog:<parameters>` will result in flamingo sending credentials to a syslog server.
+
+The following formats are supported:
+
+ * syslog - send to the default syslog output, typically a unix socket
+ * syslog:unix:/dev/log - send to a specific unix stream socket
+ * syslog:host - send to the specified host using udp and port 514
+ * syslog:host:port - send to the specified host using udp and the specified port
+ * syslog:udp:host - send to the specified host using udp and port 514
+ * syslog:udp:host:port - send to the specified host using udp and the specified port
+ * syslog:tcp:host - send to the specified host using tcp and port 514
+ * syslog:tcp:host:port - send to the specified host using tcp and the specified port
+ * syslog:tcp+tls:host - send to the specified host using tls over tcp and port 514
+ * syslog:tcp+tls:host:port - send to the specified host using tls over tcp and the specified port
 
 ## Credits
 
