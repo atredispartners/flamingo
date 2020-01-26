@@ -119,6 +119,11 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupHTTPS(rw)
 	}
 
+	// DNS
+	if _, enabled := protocols["dns"]; enabled {
+		setupDNS(rw)
+	}
+
 	// Make sure at least one capture is running
 	if protocolCount == 0 {
 		log.Fatalf("at least one protocol must be enabled")
@@ -454,6 +459,32 @@ func setupHTTPS(rw *flamingo.RecordWriter) {
 		}
 		protocolCount++
 		cleanupHandlers = append(cleanupHandlers, func() { httpConf.Shutdown() })
+	}
+}
+
+func setupDNS(rw *flamingo.RecordWriter) {
+
+	// Create a listener for each port
+	dnsPorts, err := flamingo.CrackPorts(params.DNSPorts)
+	if err != nil {
+		log.Fatal("failed to process dns ports %s: %s", params.DNSPorts, err)
+	}
+
+	for _, port := range dnsPorts {
+		dnsConf := flamingo.NewConfDNS()
+		dnsConf.BindPort = uint16(port)
+		dnsConf.RecordWriter = rw
+		dnsConf.ResolveToIP = params.DNSResolveToIP
+		if err := flamingo.SpawnDNS(dnsConf); err != nil {
+			if !params.IgnoreFailures {
+				log.Fatalf("failed to start dns server %s:%d: %q", dnsConf.BindHost, dnsConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start dns server %s:%d: %q", dnsConf.BindHost, dnsConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { dnsConf.Shutdown() })
 	}
 }
 
