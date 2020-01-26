@@ -78,7 +78,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.LDAPSPorts, "ldaps-ports", "", "636", "The list of TCP ports to listen on for LDAPS")
 
 	// DNS parameters
-	rootCmd.Flags().StringVarP(&params.DNSPorts, "dns-ports", "", "53", "The list of UDP ports to listen on for DNS")
+	rootCmd.Flags().StringVarP(&params.DNSPorts, "dns-ports", "", "53,5353", "The list of UDP ports to listen on for DNS")
 	rootCmd.Flags().StringVarP(&params.DNSResolveToIP, "dns-resolve-to", "", "", "The IP address used to respond to DNS Type A question. If empty, no response will be sent")
 
 	// HTTP(S) parameters
