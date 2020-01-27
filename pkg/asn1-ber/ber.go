@@ -165,11 +165,16 @@ func printPacket(p *Packet, indent int, printBytes bool) {
 	}
 }
 
-func resizeBuffer(in []byte, new_size uint64) (out []byte) {
+func resizeBuffer(in []byte, new_size uint64) (out []byte, err error) {
+	if new_size > 1024*1024 {
+		err = fmt.Errorf("buffer size too large")
+		return
+	}
+
 	out = make([]byte, new_size)
+	err = nil
 
 	copy(out, in)
-
 	return
 }
 
@@ -214,10 +219,12 @@ func ReadPacket(reader io.Reader) (*Packet, error) {
 		a := datalen - 128
 
 		idx += a
-		buf = resizeBuffer(buf, 2+a)
+		buf, err = resizeBuffer(buf, 2+a)
+		if err != nil {
+			return nil, err
+		}
 
 		err := readBytes(reader, buf[2:])
-
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +242,11 @@ func ReadPacket(reader io.Reader) (*Packet, error) {
 		}
 	}
 
-	buf = resizeBuffer(buf, idx+datalen)
+	buf, err = resizeBuffer(buf, idx+datalen)
+	if err != nil {
+		return nil, err
+	}
+
 	err = readBytes(reader, buf[idx:])
 
 	if err != nil {
@@ -250,12 +261,11 @@ func ReadPacket(reader io.Reader) (*Packet, error) {
 		}
 	}
 
-	p := DecodePacket(buf)
-
-	return p, nil
+	p, err := DecodePacket(buf)
+	return p, err
 }
 
-func DecodeString(data []byte) (string) {
+func DecodeString(data []byte) string {
 	return string(data)
 }
 
@@ -300,22 +310,31 @@ func EncodeInteger(val uint64) []byte {
 	return byteSlice
 }
 
-func DecodePacket(data []byte) *Packet {
-	p, _ := decodePacket(data)
+func DecodePacket(data []byte) (*Packet, error) {
+	p, _, err := decodePacket(data)
 
-	return p
+	return p, err
 }
 
-func decodePacket(data []byte) (*Packet, []byte) {
+func decodePacket(data []byte) (*Packet, []byte, error) {
 	if Debug {
 		fmt.Printf("decodePacket: enter %d\n", len(data))
 	}
 
+	dlen := uint64(len(data))
 	p := new(Packet)
+
+	if len(data) == 0 {
+		return p, data, fmt.Errorf("packet too short")
+	}
 
 	p.ClassType = data[0] & ClassBitmask
 	p.TagType = data[0] & TypeBitmask
 	p.Tag = data[0] & TagBitmask
+
+	if dlen < 3 {
+		return p, data, fmt.Errorf("packet too short")
+	}
 
 	datalen := DecodeInteger(data[1:2])
 	datapos := uint64(2)
@@ -323,6 +342,11 @@ func decodePacket(data []byte) (*Packet, []byte) {
 	if datalen&128 != 0 {
 		datalen -= 128
 		datapos += datalen
+
+		if dlen < 2+datalen {
+			return p, data, fmt.Errorf("packet too short")
+		}
+
 		datalen = DecodeInteger(data[2 : 2+datalen])
 	}
 
@@ -332,13 +356,21 @@ func decodePacket(data []byte) (*Packet, []byte) {
 
 	p.Value = nil
 
+	if dlen < datapos+datalen {
+		return p, data, fmt.Errorf("packet too short")
+	}
+
 	value_data := data[datapos : datapos+datalen]
 
 	if p.TagType == TypeConstructed {
 		for len(value_data) != 0 {
 			var child *Packet
+			var err error
 
-			child, value_data = decodePacket(value_data)
+			child, value_data, err = decodePacket(value_data)
+			if err != nil {
+				return child, value_data, fmt.Errorf("packet too short")
+			}
 			p.AppendChild(child)
 		}
 	} else if p.ClassType == ClassUniversal {
@@ -384,10 +416,17 @@ func decodePacket(data []byte) (*Packet, []byte) {
 		case TagBMPString:
 		}
 	} else {
+		if dlen < datapos+datalen {
+			return p, data, fmt.Errorf("packet too short")
+		}
 		p.Data.Write(data[datapos : datapos+datalen])
 	}
 
-	return p, data[datapos+datalen:]
+	if dlen < datapos+datalen {
+		return p, data, fmt.Errorf("packet too short")
+	}
+
+	return p, data[datapos+datalen:], nil
 }
 
 func (p *Packet) DataLength() uint64 {

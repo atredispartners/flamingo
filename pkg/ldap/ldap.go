@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 
-	"github.com/atredispartners/flamingo/pkg/asn1-ber"
+	ber "github.com/atredispartners/flamingo/pkg/asn1-ber"
 )
 
 // LDAP Application Codes
@@ -267,7 +267,11 @@ func addControlDescriptions(packet *ber.Packet) {
 		case ControlTypePaging:
 			value.Description += " (Paging)"
 			if value.Value != nil {
-				valueChildren := ber.DecodePacket(value.Data.Bytes())
+				valueChildren, err := ber.DecodePacket(value.Data.Bytes())
+				if err != nil {
+					// TODO: Report the error somewhere
+					return
+				}
 				value.Data.Truncate(0)
 				value.Value = nil
 				valueChildren.Children[1].Value = valueChildren.Children[1].Data.Bytes()
@@ -308,7 +312,10 @@ func DebugBinaryFile(fileName string) error {
 		return NewError(ErrorDebugging, err)
 	}
 	ber.PrintBytes(file, "")
-	packet := ber.DecodePacket(file)
+	packet, err := ber.DecodePacket(file)
+	if err != nil {
+		return err
+	}
 	addLDAPDescriptions(packet)
 	ber.PrintPacket(packet)
 

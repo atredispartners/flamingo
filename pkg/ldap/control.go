@@ -5,9 +5,10 @@
 package ldap
 
 import (
-	"strings"
 	"fmt"
-	"github.com/atredispartners/flamingo/pkg/asn1-ber"
+	"strings"
+
+	ber "github.com/atredispartners/flamingo/pkg/asn1-ber"
 )
 
 const (
@@ -99,7 +100,7 @@ func FindControl(controls []Control, controlType string) Control {
 	return nil
 }
 
-func DecodeControl(packet *ber.Packet) Control {
+func DecodeControl(packet *ber.Packet) (Control, error) {
 	ControlType := packet.Children[0].Value.(string)
 	packet.Children[0].Description = "Control Type (" + ControlTypeMap[ControlType] + ")"
 	c := new(ControlString)
@@ -120,7 +121,10 @@ func DecodeControl(packet *ber.Packet) Control {
 			value.Description += " (Paging)"
 			c := new(ControlPaging)
 			if value.Value != nil {
-				valueChildren := ber.DecodePacket(value.Data.Bytes())
+				valueChildren, err := ber.DecodePacket(value.Data.Bytes())
+				if err != nil {
+					return c, err
+				}
 				value.Data.Truncate(0)
 				value.Value = nil
 				value.AppendChild(valueChildren)
@@ -132,11 +136,11 @@ func DecodeControl(packet *ber.Packet) Control {
 			c.PagingSize = uint32(value.Children[0].Value.(uint64))
 			c.Cookie = value.Children[1].Data.Bytes()
 			value.Children[1].Value = c.Cookie
-			return c
+			return c, nil
 		}
 		c.ControlValue = value.Value.(string)
 	}
-	return c
+	return c, nil
 }
 
 func NewControlString(controlType string, criticality bool, controlValue string) *ControlString {

@@ -227,7 +227,8 @@ func (server *Server) handleConnectionWrapped(conn net.Conn) {
 			log.Debugf("ldap connection handler panic: %q", r)
 		}
 	}()
-	server.handleConnectionWrapped(conn)
+
+	server.handleConnection(conn)
 }
 
 //
@@ -265,7 +266,11 @@ handler:
 		controls := []Control{}
 		if len(packet.Children) > 2 {
 			for _, child := range packet.Children[2].Children {
-				controls = append(controls, DecodeControl(child))
+				v, err := DecodeControl(child)
+				if err != nil {
+					break
+				}
+				controls = append(controls, v)
 			}
 		}
 
