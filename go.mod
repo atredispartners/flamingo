@@ -9,7 +9,6 @@ require (
 	github.com/hdm/gosnmp v0.0.0-20191201190541-fbffabc0d968
 	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
 	github.com/miekg/dns v1.1.27
-	github.com/nmcclain/asn1-ber v0.0.0-20170104154839-2661553a0484
 	github.com/sirupsen/logrus v1.4.2
 	github.com/soniah/gosnmp v1.22.0 // indirect
 	github.com/spf13/cobra v0.0.5
