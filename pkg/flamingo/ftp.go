@@ -3,7 +3,6 @@ package flamingo
 import (
 	"bufio"
 	"fmt"
-	"log"
 	"net"
 	"strings"
 	"sync"
@@ -80,8 +79,6 @@ func ftpHandleConnection(c *ConfFTP, conn net.Conn) {
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			log.Println(err)
-
 			return
 		}
 		parts := strings.SplitN(strings.Trim(line, "\r\n"), " ", 2)
