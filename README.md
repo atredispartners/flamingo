@@ -44,7 +44,7 @@ All additional command-line arguments are output destinations.
 
 ## Outputs
 
-flamingo can write recorded credentials to a variety of output formats. By default, flamingo will log to `flamingo.log` and standard output.
+Flamingo can write recorded credentials to a variety of output formats. By default, flamingo will log to `flamingo.log` and standard output.
 
 ### Standard Output
 
@@ -89,7 +89,6 @@ The following formats are supported:
 
 ## Credits
 
+ * Flamingo is developed and maintained by [HD Moore](https://github.com/hdm) and [Tom Steele](https://github.com/tomsteele)
  * Initial requirements by [Chris Bellows](https://github.com/chris-atredis)
- * Project creation and maintenance by [HD Moore](https://github.com/hdm)
  * NTLM support for HTTP by [Alex Flores](https://github.com/audibleblink)
- * DNS & FTP support by [Tom Steele](https://github.com/tomsteele)
