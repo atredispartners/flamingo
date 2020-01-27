@@ -212,13 +212,22 @@ listener:
 		select {
 		case c := <-newConn:
 			server.Stats.countConns(1)
-			go server.handleConnection(c)
+			go server.handleConnectionWrapped(c)
 		case <-server.Quit:
 			ln.Close()
 			break listener
 		}
 	}
 	return nil
+}
+
+func (server *Server) handleConnectionWrapped(conn net.Conn) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Debugf("ldap connection handler panic: %q", r)
+		}
+	}()
+	server.handleConnectionWrapped(conn)
 }
 
 //
@@ -291,7 +300,7 @@ handler:
 		case ApplicationSearchRequest:
 			server.Stats.countSearches(1)
 			if err := HandleSearchRequest(req, &controls, messageID, boundDN, server, conn); err != nil {
-				log.Printf("handleSearchRequest error %s", err.Error()) // TODO: make this more testable/better err handling - stop using log, stop using breaks?
+				// log.Printf("handleSearchRequest error %s", err.Error()) // TODO: make this more testable/better err handling - stop using log, stop using breaks?
 				e := err.(*Error)
 				if err = sendPacket(conn, encodeSearchDone(messageID, e.ResultCode)); err != nil {
 					// log.Printf("sendPacket error %s", err.Error())
@@ -336,7 +345,7 @@ handler:
 			ldapResultCode := HandleDeleteRequest(req, boundDN, server.DeleteFns, conn)
 			responsePacket := encodeLDAPResponse(messageID, ApplicationDelResponse, ldapResultCode, LDAPResultCodeMap[ldapResultCode])
 			if err = sendPacket(conn, responsePacket); err != nil {
-				log.Printf("sendPacket error %s", err.Error())
+				// log.Printf("sendPacket error %s", err.Error())
 				break handler
 			}
 		case ApplicationModifyDNRequest:
