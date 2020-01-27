@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/nmcclain/asn1-ber"
+	"github.com/atredispartners/flamingo/pkg/asn1-ber"
 )
 
 type compileTest struct {

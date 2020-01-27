@@ -32,7 +32,7 @@ package ldap
 import (
 	"errors"
 
-	ber "github.com/nmcclain/asn1-ber"
+	ber "github.com/atredispartners/flamingo/pkg/asn1-ber"
 )
 
 const (

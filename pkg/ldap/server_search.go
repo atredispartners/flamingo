@@ -6,7 +6,7 @@ import (
 	"net"
 	"strings"
 
-	ber "github.com/nmcclain/asn1-ber"
+	ber "github.com/atredispartners/flamingo/pkg/asn1-ber"
 )
 
 func HandleSearchRequest(req *ber.Packet, controls *[]Control, messageID uint64, boundDN string, server *Server, conn net.Conn) (resultErr error) {

@@ -3,7 +3,7 @@ package ldap
 import (
 	"net"
 
-	ber "github.com/nmcclain/asn1-ber"
+	ber "github.com/atredispartners/flamingo/pkg/asn1-ber"
 )
 
 func HandleAddRequest(req *ber.Packet, boundDN string, fns map[string]Adder, conn net.Conn) (resultCode LDAPResultCode) {
