@@ -6,6 +6,8 @@ import (
 	"net"
 	"strings"
 	"sync"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // ConfFTP holds information for a FTP server.
@@ -46,6 +48,7 @@ func SpawnFTP(c *ConfFTP) error {
 	if err != nil {
 		return err
 	}
+	log.Debugf("ftp is listening on %s:%d", c.BindHost, c.BindPort)
 	c.listener = listener
 	go ftpStart(c)
 	return nil

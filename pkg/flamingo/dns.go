@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/miekg/dns"
+	log "github.com/sirupsen/logrus"
 )
 
 var dnsTypeMap = map[uint16]string{
@@ -199,5 +200,6 @@ func SpawnDNS(c *ConfDNS) error {
 
 	server, err := startServer(addr)
 	c.server = server
+	log.Debugf("dns is listening on %s:%d", c.BindHost, c.BindPort)
 	return err
 }
