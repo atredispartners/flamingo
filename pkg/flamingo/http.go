@@ -145,7 +145,8 @@ func httpHandler(c *ConfHTTP) http.HandlerFunc {
 			map[string]string{
 				"_server":       fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
 				"agent":         r.UserAgent(),
-				"url":           r.RequestURI,
+				"path":          r.RequestURI,
+				"url":           fmt.Sprintf("%s://%s%s", pname, r.Host, r.RequestURI),
 				"authorization": r.Header.Get("Authorization"),
 			},
 		)
@@ -190,7 +191,8 @@ func httpHandleBasicAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) bo
 		map[string]string{
 			"_server":  fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
 			"agent":    r.UserAgent(),
-			"url":      r.RequestURI,
+			"path":     r.RequestURI,
+			"url":      fmt.Sprintf("%s://%s%s", pname, r.Host, r.RequestURI),
 			"username": bits[0],
 			"password": bits[1],
 			"method":   "basic",
@@ -258,7 +260,8 @@ func httpHandleNTLMAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok
 				map[string]string{
 					"_server":  fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
 					"agent":    r.UserAgent(),
-					"url":      r.RequestURI,
+					"path":     r.RequestURI,
+					"url":      fmt.Sprintf("%s://%s%s", pname, r.Host, r.RequestURI),
 					"username": netNTLMResponse.UserName.String(),
 					"hashcat":  ntlmToHashcat(netNTLMResponse, hashType),
 					"method":   "NTLMSSP",
@@ -319,7 +322,7 @@ func ntlmToHashcat(h *ntlm.AuthenticateMessage, ntlmVer int) (out string) {
 		if len(v2) < 64 {
 			v2 = "0000000000000000000000000000000000000000000000000000000000000000"
 		}
-		lm := v2[0:31]
+		lm := v2[0:32]
 		nt := v2[32 : len(v2)-1]
 		out = fmt.Sprintf(template, un, dn, ch, lm, nt)
 	}
