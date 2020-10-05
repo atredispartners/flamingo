@@ -63,7 +63,7 @@ func init() {
 	// General options
 	rootCmd.PersistentFlags().BoolVarP(&params.Verbose, "verbose", "v", false, "Display verbose output")
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
-	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "--dont-ignore", "", false, "Treat individual listener failures as fatal")
+	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "dont-ignore", "", false, "Treat individual listener failures as fatal")
 
 	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp", "Specify a comma-separated list of protocols")
 
