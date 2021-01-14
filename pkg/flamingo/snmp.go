@@ -6,7 +6,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/hdm/gosnmp"
+	"github.com/gosnmp/gosnmp"
 	log "github.com/sirupsen/logrus"
 )
 
