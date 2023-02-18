@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/atredispartners/flamingo/pkg/asn1-ber"
+	ber "github.com/atredispartners/flamingo/pkg/asn1-ber"
 )
 
 type compileTest struct {
@@ -57,7 +57,10 @@ var binTestFilters = []binTestFilter{
 
 func TestFiltersDecode(t *testing.T) {
 	for i, test := range binTestFilters {
-		p := ber.DecodePacket(test.bin)
+		p, derr := ber.DecodePacket(test.bin)
+		if derr != nil {
+			t.Errorf("binTestFilters[%d], DecodePacket returned : %s", i, derr)
+		}
 		if filter, err := DecompileFilter(p); err != nil {
 			t.Errorf("binTestFilters[%d], DecompileFilter returned : %s", i, err)
 		} else if filter != test.str {
