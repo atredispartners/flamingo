@@ -7,11 +7,7 @@ builds:
     env:
     - CGO_ENABLED=0
     ldflags:
-      - -s -w -X "github.com/atredispartners/flamingo/cmd.Version={{.Version}}"
-    gcflags:
-      - all=-trimpath={{.Env.GOPATH}}
-    asmflags:
-      - all=-trimpath={{.Env.GOPATH}}      
+      - -s -w -X "github.com/atredispartners/flamingo/cmd.Version={{.Version}}"  
     goos:
       - windows
       - linux
@@ -28,17 +24,20 @@ builds:
       - 7
     ignore:         
       - goos: darwin
-        goarch: 386
-      - goos: darwin
-        goarch: arm
-      - goos: darwin
-        goarch: arm64        
+        goarch: arm     
       - goos: freebsd
         goarch: arm
-      - goos: freebsd
-        goarch: arm64
 signs:
-  - artifacts: checksum            
+  - id: default
+    cmd: gpg
+    args:
+      - -u x@hdm.io
+      - --output
+      - $signature
+      - --detach-sig
+      - $artifact
+    signature: ${artifact}.sig
+    artifacts: checksum      
 archives:
 - replacements:
     darwin: macos
