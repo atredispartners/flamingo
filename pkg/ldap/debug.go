@@ -6,11 +6,11 @@ import (
 )
 
 // debbuging type
-//     - has a Printf method to write the debug output
+//   - has a Printf method to write the debug output
 type debugging bool
 
 // write debug output
-func (debug debugging) Printf(format string, args ...interface{}) {
+func (debug debugging) Printf(format string, args ...any) {
 	if debug {
 		log.Debugf(format, args...)
 	}

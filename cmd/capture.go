@@ -76,7 +76,7 @@ func startCapture(cmd *cobra.Command, args []string) {
 
 	// Process CLI arguments
 	protocols := make(map[string]bool)
-	for _, pname := range strings.Split(params.Protocols, ",") {
+	for pname := range strings.SplitSeq(params.Protocols, ",") {
 		pname = strings.TrimSpace(pname)
 		protocols[pname] = true
 	}
@@ -411,7 +411,6 @@ func setupSSH(rw *flamingo.RecordWriter) {
 		log.Fatalf("failed to process ssh ports %s: %s", params.SSHPorts, err)
 	}
 	for _, port := range sshPorts {
-		port := port
 		sshConf := flamingo.NewConfSSH()
 		sshConf.PrivateKey = sshHostKey
 		sshConf.BindPort = uint16(port)
@@ -438,7 +437,6 @@ func setupSNMP(rw *flamingo.RecordWriter) {
 	}
 
 	for _, port := range snmpPorts {
-		port := port
 		snmpConf := flamingo.NewConfSNMP()
 		snmpConf.BindPort = uint16(port)
 		snmpConf.RecordWriter = rw
@@ -464,7 +462,6 @@ func setupLDAP(rw *flamingo.RecordWriter) {
 	}
 
 	for _, port := range ldapPorts {
-		port := port
 		ldapConf := flamingo.NewConfLDAP()
 		ldapConf.BindPort = uint16(port)
 		ldapConf.RecordWriter = rw
@@ -490,7 +487,6 @@ func setupLDAPS(rw *flamingo.RecordWriter) {
 	}
 
 	for _, port := range ldapsPorts {
-		port := port
 		ldapConf := flamingo.NewConfLDAP()
 		ldapConf.BindPort = uint16(port)
 		ldapConf.RecordWriter = rw
@@ -520,7 +516,6 @@ func setupHTTP(rw *flamingo.RecordWriter) {
 	}
 
 	for _, port := range httpPorts {
-		port := port
 		httpConf := flamingo.NewConfHTTP()
 		httpConf.BindPort = uint16(port)
 		httpConf.RecordWriter = rw
@@ -548,7 +543,6 @@ func setupHTTPS(rw *flamingo.RecordWriter) {
 	}
 
 	for _, port := range httpsPorts {
-		port := port
 		httpConf := flamingo.NewConfHTTP()
 		httpConf.BindPort = uint16(port)
 		httpConf.RecordWriter = rw

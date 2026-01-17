@@ -11,7 +11,7 @@ type Packet struct {
 	ClassType   uint8
 	TagType     uint8
 	Tag         uint8
-	Value       interface{}
+	Value       any
 	ByteValue   []byte
 	Data        *bytes.Buffer
 	Children    []*Packet
@@ -120,7 +120,7 @@ func PrintBytes(buf []byte, indent string) {
 		num_lines[i/30] += fmt.Sprintf("%02d ", (i+1)%100)
 	}
 
-	for i := 0; i < len(data_lines); i++ {
+	for i := range data_lines {
 		fmt.Print(indent + data_lines[i] + "\n")
 		fmt.Print(indent + num_lines[i] + "\n\n")
 	}
@@ -465,7 +465,7 @@ func (p *Packet) AppendChild(child *Packet) {
 	p.Children[len(p.Children)-1] = child
 }
 
-func Encode(ClassType, TagType, Tag uint8, Value interface{}, Description string) *Packet {
+func Encode(ClassType, TagType, Tag uint8, Value any, Description string) *Packet {
 	p := new(Packet)
 
 	p.ClassType = ClassType

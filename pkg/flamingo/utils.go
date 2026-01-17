@@ -21,8 +21,8 @@ func CrackPorts(pspec string) ([]int, error) {
 	// Use a map to dedup and shuffle ports
 	ports := make(map[int]bool)
 
-	bits := strings.Split(pspec, ",")
-	for _, bit := range bits {
+	bits := strings.SplitSeq(pspec, ",")
+	for bit := range bits {
 
 		// Split based on dash
 		prange := strings.Split(bit, "-")
