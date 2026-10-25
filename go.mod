@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/RackSec/srslog v0.0.0-20180709174129-a4725f04ec91
 	github.com/audibleblink/go-ntlm v0.0.0-20190308023621-c1bc43845e23
-	github.com/gosnmp/gosnmp v1.45.0
+	github.com/gosnmp/gosnmp v1.47.0
 	github.com/miekg/dns v1.1.73
 	github.com/sirupsen/logrus v1.10.2
 	github.com/spf13/cobra v1.10.2
