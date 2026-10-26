@@ -1,4 +1,4 @@
-// +build !freebsd,!darwin,!linux
+//go:build !freebsd && !darwin && !linux
 
 package flamingo
 

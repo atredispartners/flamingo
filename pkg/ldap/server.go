@@ -172,12 +172,26 @@ func (server *Server) SetStats(enable bool) {
 	}
 }
 
-func (server *Server) GetStats() Stats {
-	defer func() {
-		server.Stats.statsMutex.Unlock()
-	}()
+type StatsSnapshot struct {
+	Conns    int
+	Binds    int
+	Unbinds  int
+	Searches int
+}
+
+func (server *Server) GetStats() StatsSnapshot {
+	if server.Stats == nil {
+		return StatsSnapshot{}
+	}
 	server.Stats.statsMutex.Lock()
-	return *server.Stats
+	snapshot := StatsSnapshot{
+		Conns:    server.Stats.Conns,
+		Binds:    server.Stats.Binds,
+		Unbinds:  server.Stats.Unbinds,
+		Searches: server.Stats.Searches,
+	}
+	server.Stats.statsMutex.Unlock()
+	return snapshot
 }
 
 func (server *Server) ListenAndServe(listenString string) error {

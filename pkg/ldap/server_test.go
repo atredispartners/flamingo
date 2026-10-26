@@ -283,7 +283,6 @@ func TestSearchStats(t *testing.T) {
 	}
 
 	stats := s.GetStats()
-	log.Println(stats)
 	if stats.Conns != 1 || stats.Binds != 1 {
 		t.Errorf("Stats data missing or incorrect: %v", w.buffer.String())
 	}

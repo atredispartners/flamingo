@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	syslog "github.com/RackSec/srslog"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/signal"
@@ -366,7 +365,7 @@ func setupTLS() {
 	tlsKeyData := ""
 
 	if params.TLSCertFile != "" {
-		raw, err := ioutil.ReadFile(params.TLSCertFile)
+		raw, err := os.ReadFile(params.TLSCertFile)
 		if err != nil {
 			log.Fatalf("failed to read TLS certificate: %s", err)
 		}
@@ -374,7 +373,7 @@ func setupTLS() {
 		tlsKeyData = tlsCertData
 
 		if params.TLSKeyFile != "" {
-			rawKey, err := ioutil.ReadFile(params.TLSKeyFile)
+			rawKey, err := os.ReadFile(params.TLSKeyFile)
 			if err != nil {
 				log.Fatalf("failed to read TLS certificate: %s", err)
 			}
@@ -390,7 +389,7 @@ func setupTLS() {
 func setupSSH(rw *flamingo.RecordWriter) {
 	sshHostKey := ""
 	if params.SSHHostKey != "" {
-		data, err := ioutil.ReadFile(params.SSHHostKey)
+		data, err := os.ReadFile(params.SSHHostKey)
 		if err != nil {
 			log.Fatalf("failed to read ssh host key %s: %s", params.SSHHostKey, err)
 		}
@@ -444,7 +443,7 @@ func setupSNMP(rw *flamingo.RecordWriter) {
 			if params.DontIgnoreFailures {
 				log.Fatalf("failed to start snmp server %s:%d: %s", snmpConf.BindHost, snmpConf.BindPort, err)
 			} else {
-				log.Errorf("failed to start snmb server %s:%d: %s", snmpConf.BindHost, snmpConf.BindPort, err)
+				log.Errorf("failed to start snmp server %s:%d: %s", snmpConf.BindHost, snmpConf.BindPort, err)
 			}
 			continue
 		}
@@ -570,7 +569,7 @@ func setupDNS(rw *flamingo.RecordWriter) {
 	// Create a listener for each port
 	dnsPorts, err := flamingo.CrackPorts(params.DNSPorts)
 	if err != nil {
-		log.Fatal("failed to process dns ports %s: %s", params.DNSPorts, err)
+		log.Fatalf("failed to process dns ports %s: %s", params.DNSPorts, err)
 	}
 
 	for _, port := range dnsPorts {
@@ -596,7 +595,7 @@ func setupFTP(rw *flamingo.RecordWriter) {
 	// Create a listner for each port
 	ftpPorts, err := flamingo.CrackPorts(params.FTPPorts)
 	if err != nil {
-		log.Fatal("failed to process ftp ports %s: %s", params.FTPPorts, err)
+		log.Fatalf("failed to process ftp ports %s: %s", params.FTPPorts, err)
 	}
 
 	for _, port := range ftpPorts {
@@ -605,9 +604,9 @@ func setupFTP(rw *flamingo.RecordWriter) {
 		ftpConf.RecordWriter = rw
 		if err := flamingo.SpawnFTP(ftpConf); err != nil {
 			if params.DontIgnoreFailures {
-				log.Fatalf("failed to start dns server %s:%d: %q", ftpConf.BindHost, ftpConf.BindPort, err)
+				log.Fatalf("failed to start ftp server %s:%d: %q", ftpConf.BindHost, ftpConf.BindPort, err)
 			} else {
-				log.Errorf("failed to start dns server %s:%d: %q", ftpConf.BindHost, ftpConf.BindPort, err)
+				log.Errorf("failed to start ftp server %s:%d: %q", ftpConf.BindHost, ftpConf.BindPort, err)
 			}
 			continue
 		}

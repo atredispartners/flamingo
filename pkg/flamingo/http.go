@@ -1,7 +1,7 @@
 package flamingo
 
 import (
-	ctx "context"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -53,7 +53,9 @@ func (c *ConfHTTP) Shutdown() {
 
 	if !c.shutdown {
 		c.shutdown = true
-		c.server.Shutdown(ctx.Background())
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		c.server.Shutdown(timeoutCtx)
 	}
 }
 

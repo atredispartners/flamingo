@@ -177,7 +177,7 @@ func compileFilter(filter string, pos int) (*ber.Packet, int, error) {
 		packet.AppendChild(child)
 		return packet, newPos, err
 	default:
-		attribute := ""
+		var attribute strings.Builder
 		condition := ""
 		for newPos < len(filter) && filter[newPos] != ')' {
 			switch {
@@ -195,7 +195,7 @@ func compileFilter(filter string, pos int) (*ber.Packet, int, error) {
 				packet = ber.Encode(ber.ClassContext, ber.TypeConstructed, FilterApproxMatch, nil, FilterMap[FilterLessOrEqual])
 				newPos++
 			case packet == nil:
-				attribute += fmt.Sprintf("%c", filter[newPos])
+				attribute.WriteString(fmt.Sprintf("%c", filter[newPos]))
 			}
 			newPos++
 		}
@@ -212,10 +212,10 @@ func compileFilter(filter string, pos int) (*ber.Packet, int, error) {
 			packet.TagType = ber.TypePrimitive
 			packet.Tag = FilterPresent
 			packet.Description = FilterMap[packet.Tag]
-			packet.Data.WriteString(attribute)
+			packet.Data.WriteString(attribute.String())
 			return packet, newPos + 1, nil
 		}
-		packet.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, attribute, "Attribute"))
+		packet.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, attribute.String(), "Attribute"))
 		switch {
 		case packet.Tag == FilterEqualityMatch && condition[0] == '*' && condition[len(condition)-1] == '*':
 			// Any

@@ -1,6 +1,7 @@
 package flamingo
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -173,4 +174,27 @@ func SSHGenerateRSAKey(bits int) ([]byte, error) {
 	pkeyPEM := pem.EncodeToMemory(&pkeyBlock)
 
 	return pkeyPEM, nil
+}
+
+// SSHGenerateEd25519Key generates a new Ed25519 SSH host key
+func SSHGenerateEd25519Key() ([]byte, error) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+
+	privBlock := pem.Block{
+		Type:    "PRIVATE KEY",
+		Headers: nil,
+		Bytes:   privDER,
+	}
+
+	privPEM := pem.EncodeToMemory(&privBlock)
+
+	return privPEM, nil
 }

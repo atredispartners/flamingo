@@ -54,7 +54,6 @@ func HandleBindRequest(req *ber.Packet, fns map[string]Binder, conn net.Conn) (r
 		// log.Debug("SASL authentication is not supported")
 		return LDAPResultInappropriateAuthentication
 	}
-	return LDAPResultOperationsError
 }
 
 func encodeBindResponse(messageID uint64, ldapResultCode LDAPResultCode) *ber.Packet {
