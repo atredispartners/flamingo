@@ -153,7 +153,12 @@ func vncHandleConnection(c *ConfVNC, conn net.Conn) {
 	// Step 6: tell the client authentication failed and close. We never had
 	// a real session to offer; a failure result is both honest to the
 	// protocol and discourages the client from proceeding further.
-	conn.Write([]byte{0, 0, 0, 1})
+	if minor >= 7 {
+		conn.Write([]byte{0, 0, 0, 1, 0, 0, 0, 21})
+		conn.Write([]byte("Authentication failed"))
+	} else {
+		conn.Write([]byte{0, 0, 0, 1})
+	}
 
 	challengeHex := hex.EncodeToString(VNCChallenge)
 	responseHex := hex.EncodeToString(response)
