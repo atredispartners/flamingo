@@ -132,6 +132,11 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupFTP(rw)
 	}
 
+	// VNC
+	if _, enabled := protocols["vnc"]; enabled {
+		setupVNC(rw)
+	}
+
 	// IMAP/IMAPS
 	if _, enabled := protocols["imap"]; enabled {
 		setupIMAP(rw)
@@ -621,6 +626,31 @@ func setupFTP(rw *flamingo.RecordWriter) {
 	}
 }
 
+func setupVNC(rw *flamingo.RecordWriter) {
+
+	// Create a listener for each port
+	vncPorts, err := flamingo.CrackPorts(params.VNCPorts)
+	if err != nil {
+		log.Fatalf("failed to process vnc ports %s: %s", params.VNCPorts, err)
+	}
+
+	for _, port := range vncPorts {
+		vncConf := flamingo.NewConfVNC()
+		vncConf.BindPort = uint16(port)
+		vncConf.RecordWriter = rw
+		if err := flamingo.SpawnVNC(vncConf); err != nil {
+			if params.DontIgnoreFailures {
+				log.Fatalf("failed to start vnc server %s:%d: %q", vncConf.BindHost, vncConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start vnc server %s:%d: %q", vncConf.BindHost, vncConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { vncConf.Shutdown() })
+	}
+}
+
 func setupIMAP(rw *flamingo.RecordWriter) {
 
 	// Create a listener for each port
@@ -633,8 +663,7 @@ func setupIMAP(rw *flamingo.RecordWriter) {
 		imapConf := flamingo.NewConfIMAP()
 		imapConf.BindPort = uint16(port)
 		imapConf.RecordWriter = rw
-		// The plaintext listener stays plaintext, but still needs a cert so
-		// it can honor a STARTTLS upgrade.
+		// The plaintext listener needs a certificate to honor STARTTLS
 		imapConf.TLSCert = params.TLSCertData
 		imapConf.TLSKey = params.TLSKeyData
 		imapConf.TLSName = params.TLSName
