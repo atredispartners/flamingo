@@ -29,6 +29,7 @@ type flamingoParameters struct {
 	HTTPSPorts         string
 	HTTPBasicRealm     string
 	HTTPAuthMode       string
+	VNCPorts           string
 	TLSCertFile        string
 	TLSCertData        string
 	TLSKeyFile         string
@@ -65,7 +66,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
 	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "dont-ignore", "", false, "Treat individual listener failures as fatal")
 
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp", "Specify a comma-separated list of protocols")
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp,vnc", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -90,6 +91,9 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.HTTPSPorts, "https-ports", "", "443", "The list of TCP ports to listen on for HTTPS")
 	rootCmd.Flags().StringVarP(&params.HTTPBasicRealm, "http-realm", "", "Administration", "The HTTP basic authentication realm to present")
 	rootCmd.Flags().StringVarP(&params.HTTPAuthMode, "http-auth-mode", "", "ntlm", "The authentication mode for the HTTP listeners (ntlm or basic)")
+
+	// VNC parameters
+	rootCmd.Flags().StringVarP(&params.VNCPorts, "vnc-ports", "", "5900", "The list of TCP ports to listen on for VNC")
 
 	rootCmd.Flags().StringVarP(&params.TLSCertFile, "tls-cert", "", "", "An optional x509 certificate for TLS listeners")
 	rootCmd.Flags().StringVarP(&params.TLSKeyFile, "tls-key", "", "", "An optional x509 key for TLS listeners")

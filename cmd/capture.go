@@ -132,6 +132,11 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupFTP(rw)
 	}
 
+	// VNC
+	if _, enabled := protocols["vnc"]; enabled {
+		setupVNC(rw)
+	}
+
 	// Make sure at least one capture is running
 	if protocolCount == 0 {
 		log.Fatalf("at least one protocol must be enabled")
@@ -612,6 +617,31 @@ func setupFTP(rw *flamingo.RecordWriter) {
 		}
 		protocolCount++
 		cleanupHandlers = append(cleanupHandlers, func() { ftpConf.Shutdown() })
+	}
+}
+
+func setupVNC(rw *flamingo.RecordWriter) {
+
+	// Create a listener for each port
+	vncPorts, err := flamingo.CrackPorts(params.VNCPorts)
+	if err != nil {
+		log.Fatalf("failed to process vnc ports %s: %s", params.VNCPorts, err)
+	}
+
+	for _, port := range vncPorts {
+		vncConf := flamingo.NewConfVNC()
+		vncConf.BindPort = uint16(port)
+		vncConf.RecordWriter = rw
+		if err := flamingo.SpawnVNC(vncConf); err != nil {
+			if params.DontIgnoreFailures {
+				log.Fatalf("failed to start vnc server %s:%d: %q", vncConf.BindHost, vncConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start vnc server %s:%d: %q", vncConf.BindHost, vncConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { vncConf.Shutdown() })
 	}
 }
 
