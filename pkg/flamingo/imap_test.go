@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,7 +25,7 @@ import (
 func imapTestServer(t *testing.T) (string, chan map[string]string, *ConfIMAP) {
 	t.Helper()
 	rw := NewRecordWriter()
-	got := make(chan map[string]string, 1)
+	got := make(chan map[string]string, 8)
 	rw.OutputWriters = append(rw.OutputWriters, func(rec map[string]string) error {
 		got <- rec
 		return nil
@@ -78,6 +79,67 @@ func TestIMAPLogin(t *testing.T) {
 	}
 	if rec["method"] != "LOGIN" {
 		t.Errorf("method = %q, want LOGIN", rec["method"])
+	}
+}
+
+// TestIMAPLoginLiteral verifies LOGIN arguments sent as synchronizing and
+// non-synchronizing literals, as mail clients do for passwords containing
+// special characters, are captured intact.
+func TestIMAPLoginLiteral(t *testing.T) {
+	addr, got, conf := imapTestServer(t)
+	defer conf.Shutdown()
+
+	conn, r := imapDial(t, addr)
+	defer conn.Close()
+	fmt.Fprintf(conn, "a1 LOGIN {5}\r\n")
+	line, _ := r.ReadString('\n')
+	if line[0] != '+' {
+		t.Fatalf("expected continuation for literal, got %q", line)
+	}
+	fmt.Fprintf(conn, "alice {8+}\r\n")
+	fmt.Fprintf(conn, "pa\"ss {}\r\n")
+
+	rec := imapWaitCred(t, got)
+	if rec["username"] != "alice" || rec["password"] != "pa\"ss {}" {
+		t.Errorf("literal LOGIN captured %q/%q, want alice/pa\"ss {}", rec["username"], rec["password"])
+	}
+}
+
+// TestIMAPLoginQuotedEscape verifies backslash escapes inside quoted LOGIN
+// arguments are decoded.
+func TestIMAPLoginQuotedEscape(t *testing.T) {
+	addr, got, conf := imapTestServer(t)
+	defer conf.Shutdown()
+
+	conn, _ := imapDial(t, addr)
+	defer conn.Close()
+	fmt.Fprintf(conn, "a1 LOGIN \"al\\\"ice\" \"back\\\\slash\"\r\n")
+
+	rec := imapWaitCred(t, got)
+	if rec["username"] != "al\"ice" || rec["password"] != "back\\slash" {
+		t.Errorf("quoted LOGIN captured %q/%q, want al\"ice/back\\slash", rec["username"], rec["password"])
+	}
+}
+
+// TestIMAPRetryAfterFailure verifies the session stays open after a rejected
+// AUTHENTICATE so a client's fallback attempt is captured too.
+func TestIMAPRetryAfterFailure(t *testing.T) {
+	addr, got, conf := imapTestServer(t)
+	defer conf.Shutdown()
+
+	conn, r := imapDial(t, addr)
+	defer conn.Close()
+	blob := base64.StdEncoding.EncodeToString([]byte("\x00first\x00one"))
+	fmt.Fprintf(conn, "a1 AUTHENTICATE PLAIN %s\r\n", blob)
+	if line, _ := r.ReadString('\n'); !strings.HasPrefix(line, "a1 NO") {
+		t.Fatalf("expected a1 NO, got %q", line)
+	}
+	fmt.Fprintf(conn, "a2 LOGIN second two\r\n")
+
+	first := imapWaitCred(t, got)
+	second := imapWaitCred(t, got)
+	if first["username"] != "first" || second["username"] != "second" {
+		t.Errorf("captured %q then %q, want first then second", first["username"], second["username"])
 	}
 }
 
@@ -184,6 +246,48 @@ func TestIMAPStartTLS(t *testing.T) {
 	rec := imapWaitCred(t, got)
 	if rec["username"] != "tlsuser" || rec["password"] != "tlspass" {
 		t.Errorf("STARTTLS login captured %q/%q, want tlsuser/tlspass", rec["username"], rec["password"])
+	}
+}
+
+// TestIMAPS verifies an implicit-TLS listener captures credentials and tags
+// them with the imaps protocol name.
+func TestIMAPS(t *testing.T) {
+	rw := NewRecordWriter()
+	got := make(chan map[string]string, 1)
+	rw.OutputWriters = append(rw.OutputWriters, func(rec map[string]string) error {
+		got <- rec
+		return nil
+	})
+	conf := NewConfIMAP()
+	conf.BindHost = "127.0.0.1"
+	conf.BindPort = 0
+	conf.RecordWriter = rw
+	conf.TLS = true
+	conf.TLSCert, conf.TLSKey = imapTestCert(t)
+	if err := SpawnIMAP(conf); err != nil {
+		t.Fatalf("SpawnIMAP: %s", err)
+	}
+	defer conf.Shutdown()
+
+	tc, err := tls.Dial("tcp", conf.listener.Addr().String(), &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatalf("tls dial: %s", err)
+	}
+	defer tc.Close()
+	tc.SetDeadline(time.Now().Add(5 * time.Second))
+	r := bufio.NewReader(tc)
+	greeting, _ := r.ReadString('\n')
+	if strings.Contains(greeting, "STARTTLS") {
+		t.Errorf("imaps greeting advertises STARTTLS: %q", greeting)
+	}
+	fmt.Fprintf(tc, "a1 LOGIN imapsuser imapspass\r\n")
+
+	rec := imapWaitCred(t, got)
+	if rec["_proto"] != "imaps" {
+		t.Errorf("_proto = %q, want imaps", rec["_proto"])
+	}
+	if rec["username"] != "imapsuser" || rec["password"] != "imapspass" {
+		t.Errorf("IMAPS login captured %q/%q, want imapsuser/imapspass", rec["username"], rec["password"])
 	}
 }
 

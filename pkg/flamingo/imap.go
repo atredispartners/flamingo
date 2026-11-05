@@ -5,7 +5,10 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"io"
+	"maps"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,9 +16,20 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// ConfIMAP describes the options for an IMAP capture service. A single
-// config serves either plaintext IMAP (port 143) or implicit-TLS IMAPS
-// (port 993) depending on the TLS flag, mirroring the LDAP/LDAPS split.
+// IMAPCramChallenge is the fixed CRAM-MD5 challenge presented to every
+// client. A constant challenge, like the fixed VNC and NTLM challenges,
+// lets captured responses be cracked offline with precomputed material.
+const IMAPCramChallenge = "<1896.flamingo@localhost>"
+
+// imapMaxLiteral caps the size of a literal argument accepted from a client.
+const imapMaxLiteral = 64 * 1024
+
+// imapTimeout is the idle deadline applied to each client connection.
+const imapTimeout = 30 * time.Second
+
+// ConfIMAP describes the options for an IMAP capture service. The TLS flag
+// selects implicit TLS (IMAPS); plaintext listeners offer STARTTLS when a
+// certificate is configured.
 type ConfIMAP struct {
 	BindPort     uint16
 	BindHost     string
@@ -56,32 +70,45 @@ func (c *ConfIMAP) Shutdown() {
 	}
 }
 
-// SpawnIMAP starts a logging IMAP server.
+// SpawnIMAP starts a logging IMAP or IMAPS server.
 func SpawnIMAP(c *ConfIMAP) error {
+	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
+
 	if !c.TLS {
-		listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", c.BindHost, c.BindPort))
+		listener, err := net.Listen("tcp", addr)
 		if err != nil {
-			return fmt.Errorf("failed to listen on %s:%d (%s)", c.BindHost, c.BindPort, err)
+			return fmt.Errorf("failed to listen on %s (%s)", addr, err)
 		}
 		c.listener = listener
+		log.Debugf("imap is listening on %s", addr)
 		go imapStart(c)
 		return nil
 	}
 
-	tlsConfig := tls.Config{ServerName: c.TLSName}
-	kp, err := tls.X509KeyPair([]byte(c.TLSCert), []byte(c.TLSKey))
+	tlsConfig, err := c.tlsConfig()
 	if err != nil {
-		return fmt.Errorf("failed to load tls cert for imaps on %s:%d (%s)", c.BindHost, c.BindPort, err)
+		return fmt.Errorf("failed to load tls cert for imaps on %s (%s)", addr, err)
 	}
-	tlsConfig.Certificates = []tls.Certificate{kp}
-
-	listener, err := tls.Listen("tcp", fmt.Sprintf("%s:%d", c.BindHost, c.BindPort), &tlsConfig)
+	listener, err := tls.Listen("tcp", addr, tlsConfig)
 	if err != nil {
-		return fmt.Errorf("failed to listen with tls on %s:%d (%s)", c.BindHost, c.BindPort, err)
+		return fmt.Errorf("failed to listen with tls on %s (%s)", addr, err)
 	}
 	c.listener = listener
+	log.Debugf("imaps is listening on %s", addr)
 	go imapStart(c)
 	return nil
+}
+
+// tlsConfig builds a server TLS configuration from the configured key pair.
+func (c *ConfIMAP) tlsConfig() (*tls.Config, error) {
+	kp, err := tls.X509KeyPair([]byte(c.TLSCert), []byte(c.TLSKey))
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		ServerName:   c.TLSName,
+		Certificates: []tls.Certificate{kp},
+	}, nil
 }
 
 func imapStart(c *ConfIMAP) {
@@ -94,6 +121,7 @@ func imapStart(c *ConfIMAP) {
 	}
 }
 
+// pname returns the protocol name used in credential records.
 func (c *ConfIMAP) pname() string {
 	if c.TLS {
 		return "imaps"
@@ -101,72 +129,84 @@ func (c *ConfIMAP) pname() string {
 	return "imap"
 }
 
-// imapRecord logs a captured credential.
-func (c *ConfIMAP) imapRecord(conn net.Conn, username, password, method string) {
-	c.RecordWriter.Record(
-		"credential",
-		c.pname(),
-		conn.RemoteAddr().String(),
-		map[string]string{
-			"_server":  fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
-			"username": username,
-			"password": password,
-			"method":   method,
-		},
-	)
+// record logs a captured credential with the given method and fields.
+func (c *ConfIMAP) record(conn net.Conn, method string, fields map[string]string) {
+	rec := map[string]string{
+		"_server": fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
+		"method":  method,
+	}
+	maps.Copy(rec, fields)
+	c.RecordWriter.Record("credential", c.pname(), conn.RemoteAddr().String(), rec)
 }
 
-// imapCapabilities returns the CAPABILITY list flamingo advertises. It
-// offers the mechanisms it can capture (LOGIN/PLAIN cleartext and CRAM-MD5
-// as a crackable fallback) and, on a not-yet-encrypted plaintext
-// connection, STARTTLS so a client that refuses to send credentials in the
-// clear will upgrade and then authenticate.
-func imapCapabilities(encrypted bool) string {
+// imapSession tracks the state of a single client connection.
+type imapSession struct {
+	conf      *ConfIMAP
+	conn      net.Conn
+	reader    *bufio.Reader
+	writer    *bufio.Writer
+	encrypted bool
+}
+
+// capabilities returns the CAPABILITY list advertised to the client. Only
+// mechanisms that yield a capturable credential are offered, plus STARTTLS
+// on plaintext connections that can be upgraded.
+func (s *imapSession) capabilities() string {
 	caps := "IMAP4rev1 AUTH=PLAIN AUTH=LOGIN AUTH=CRAM-MD5"
-	if !encrypted {
+	if s.canStartTLS() {
 		caps += " STARTTLS"
 	}
 	return caps
 }
 
-// imapHandleConnection walks a client through enough of the IMAP
-// conversation to capture credentials. It advertises LOGIN, PLAIN,
-// CRAM-MD5 and (on plaintext connections) STARTTLS so a client will
-// attempt one of them.
+// canStartTLS reports whether the connection can still be upgraded to TLS.
+func (s *imapSession) canStartTLS() bool {
+	return !s.encrypted && s.conf.TLSCert != ""
+}
+
+// reply writes a single response line to the client.
+func (s *imapSession) reply(format string, args ...any) {
+	fmt.Fprintf(s.writer, format+"\r\n", args...)
+	s.writer.Flush()
+}
+
+// readLine reads one line from the client with the trailing CRLF removed.
+func (s *imapSession) readLine() (string, error) {
+	line, err := s.reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
+}
+
+// imapHandleConnection greets the client and runs the command loop until
+// the client disconnects, logs out, or times out.
 func imapHandleConnection(c *ConfIMAP, conn net.Conn) {
 	defer conn.Close()
-	// Encrypted from the start on an implicit-TLS (993) listener.
-	imapConverse(c, conn, c.TLS)
+	conn.SetDeadline(time.Now().Add(imapTimeout))
+
+	s := &imapSession{
+		conf:      c,
+		conn:      conn,
+		reader:    bufio.NewReader(conn),
+		writer:    bufio.NewWriter(conn),
+		encrypted: c.TLS,
+	}
+	s.reply("* OK [CAPABILITY %s] flamingo ready", s.capabilities())
+	s.commandLoop()
 }
 
-// imapConverse greets the client once and then runs the command loop.
-// encrypted tracks whether the connection is already under TLS (implicit
-// TLS), which controls whether STARTTLS is advertised.
-func imapConverse(c *ConfIMAP, conn net.Conn, encrypted bool) {
-	conn.SetDeadline(time.Now().Add(30 * time.Second))
-
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
-
-	writer.WriteString(fmt.Sprintf("* OK [CAPABILITY %s] flamingo ready\r\n", imapCapabilities(encrypted)))
-	writer.Flush()
-
-	imapCommandLoop(c, conn, reader, writer, encrypted)
-}
-
-// imapCommandLoop reads and handles commands on an already-greeted
-// connection. After a STARTTLS upgrade it is re-entered over the new TLS
-// connection WITHOUT sending a second greeting, as RFC 3501 requires: the
-// client continues the same session and does not expect another greeting.
-func imapCommandLoop(c *ConfIMAP, conn net.Conn, reader *bufio.Reader, writer *bufio.Writer, encrypted bool) {
+// commandLoop handles tagged commands until the connection ends. Authentication
+// attempts are recorded and rejected so a client will retry with any other
+// credentials or mechanisms it has.
+func (s *imapSession) commandLoop() {
 	for {
-		line, err := reader.ReadString('\n')
+		line, err := s.readLine()
 		if err != nil {
 			return
 		}
-		line = strings.TrimRight(line, "\r\n")
 
-		// IMAP commands are "<tag> <command> [args]".
+		// Commands are "<tag> <command> [args]"
 		parts := strings.SplitN(line, " ", 3)
 		if len(parts) < 2 {
 			continue
@@ -180,259 +220,263 @@ func imapCommandLoop(c *ConfIMAP, conn net.Conn, reader *bufio.Reader, writer *b
 
 		switch command {
 		case "CAPABILITY":
-			writer.WriteString(fmt.Sprintf("* CAPABILITY %s\r\n", imapCapabilities(encrypted)))
-			writer.WriteString(fmt.Sprintf("%s OK CAPABILITY completed\r\n", tag))
-			writer.Flush()
+			s.reply("* CAPABILITY %s", s.capabilities())
+			s.reply("%s OK CAPABILITY completed", tag)
+
+		case "NOOP":
+			s.reply("%s OK NOOP completed", tag)
 
 		case "STARTTLS":
-			if encrypted || c.TLSCert == "" {
-				writer.WriteString(fmt.Sprintf("%s NO STARTTLS not available\r\n", tag))
-				writer.Flush()
+			if !s.canStartTLS() {
+				s.reply("%s NO STARTTLS not available", tag)
 				continue
 			}
-			writer.WriteString(fmt.Sprintf("%s OK begin TLS negotiation\r\n", tag))
-			writer.Flush()
-
-			kp, err := tls.X509KeyPair([]byte(c.TLSCert), []byte(c.TLSKey))
-			if err != nil {
-				log.Debugf("imap starttls cert error: %s", err)
+			s.reply("%s OK begin TLS negotiation", tag)
+			if err := s.startTLS(); err != nil {
+				log.Debugf("imap starttls failed from %s: %s", s.conn.RemoteAddr(), err)
 				return
 			}
-			tlsConn := tls.Server(conn, &tls.Config{
-				Certificates: []tls.Certificate{kp},
-				ServerName:   c.TLSName,
-			})
-			if err := tlsConn.Handshake(); err != nil {
-				log.Debugf("imap starttls handshake failed from %s: %s", conn.RemoteAddr(), err)
-				return
-			}
-			// Continue the SAME session over TLS. No second greeting: the
-			// client resumes sending commands on the encrypted channel.
-			tlsConn.SetDeadline(time.Now().Add(30 * time.Second))
-			imapCommandLoop(c, tlsConn, bufio.NewReader(tlsConn), bufio.NewWriter(tlsConn), true)
-			return
 
 		case "LOGIN":
-			// LOGIN <user> <pass>, each possibly quoted.
-			user, pass := imapParseLogin(args)
-			c.imapRecord(conn, user, pass, "LOGIN")
-			writer.WriteString(fmt.Sprintf("%s NO [AUTHENTICATIONFAILED] credentials rejected\r\n", tag))
-			writer.Flush()
+			fields, err := s.readAstrings(args)
+			if err != nil {
+				s.reply("%s BAD invalid LOGIN arguments", tag)
+				continue
+			}
+			user, pass := "", ""
+			if len(fields) > 0 {
+				user = fields[0]
+			}
+			if len(fields) > 1 {
+				pass = fields[1]
+			}
+			s.conf.record(s.conn, "LOGIN", map[string]string{
+				"username": user,
+				"password": pass,
+			})
+			s.reply("%s NO [AUTHENTICATIONFAILED] credentials rejected", tag)
 
 		case "AUTHENTICATE":
-			// args is "<mechanism> [initial-response]". A client may send
-			// the SASL initial response inline rather than waiting for the
-			// server's continuation prompt.
+			// Arguments are "<mechanism> [initial-response]"
 			mechParts := strings.SplitN(strings.TrimSpace(args), " ", 2)
 			mech := strings.ToUpper(mechParts[0])
 			initial := ""
 			if len(mechParts) == 2 {
 				initial = strings.TrimSpace(mechParts[1])
 			}
+			var err error
 			switch mech {
 			case "PLAIN":
-				if imapAuthPlain(c, conn, reader, writer, tag, initial) {
-					return
-				}
+				err = s.authPlain(tag, initial)
 			case "LOGIN":
-				if imapAuthLogin(c, conn, reader, writer, tag, initial) {
-					return
-				}
+				err = s.authLogin(tag, initial)
 			case "CRAM-MD5":
-				if imapAuthCramMD5(c, conn, reader, writer, tag) {
-					return
-				}
+				err = s.authCramMD5(tag)
 			default:
-				writer.WriteString(fmt.Sprintf("%s NO unsupported mechanism\r\n", tag))
-				writer.Flush()
+				s.reply("%s NO unsupported mechanism", tag)
+			}
+			if err != nil {
+				return
 			}
 
 		case "LOGOUT":
-			writer.WriteString("* BYE flamingo logging out\r\n")
-			writer.WriteString(fmt.Sprintf("%s OK LOGOUT completed\r\n", tag))
-			writer.Flush()
+			s.reply("* BYE flamingo logging out")
+			s.reply("%s OK LOGOUT completed", tag)
 			return
 
 		default:
-			// Nudge the client toward authenticating.
-			writer.WriteString(fmt.Sprintf("%s NO authenticate first\r\n", tag))
-			writer.Flush()
+			s.reply("%s NO authenticate first", tag)
 		}
 	}
 }
 
-// imapAuthPlain handles SASL PLAIN. The credential may be sent inline as a
-// SASL initial response ("AUTHENTICATE PLAIN <base64>") or after a
-// continuation prompt. The decoded blob is "[authzid]\0authcid\0password".
-func imapAuthPlain(c *ConfIMAP, conn net.Conn, reader *bufio.Reader, writer *bufio.Writer, tag, initial string) bool {
-	resp := initial
-	if resp == "" {
-		// No inline initial response; prompt for it.
-		writer.WriteString("+ \r\n")
-		writer.Flush()
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return true
-		}
-		resp = strings.TrimRight(line, "\r\n")
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(resp)
+// startTLS upgrades the connection in place. The client resumes the same
+// session over TLS without a second greeting.
+func (s *imapSession) startTLS() error {
+	tlsConfig, err := s.conf.tlsConfig()
 	if err != nil {
-		writer.WriteString(fmt.Sprintf("%s NO invalid base64\r\n", tag))
-		writer.Flush()
-		return false
+		return err
+	}
+	tlsConn := tls.Server(s.conn, tlsConfig)
+	if err := tlsConn.Handshake(); err != nil {
+		return err
+	}
+	tlsConn.SetDeadline(time.Now().Add(imapTimeout))
+	s.conn = tlsConn
+	s.reader = bufio.NewReader(tlsConn)
+	s.writer = bufio.NewWriter(tlsConn)
+	s.encrypted = true
+	return nil
+}
+
+// continuation sends a server continuation request and returns the client
+// response. A "*" response is a SASL cancellation and is reported as a
+// base64 error so the caller rejects the attempt.
+func (s *imapSession) continuation(prompt string) ([]byte, error) {
+	s.reply("+ %s", prompt)
+	line, err := s.readLine()
+	if err != nil {
+		return nil, err
+	}
+	if line == "*" {
+		return nil, base64.CorruptInputError(0)
+	}
+	return base64.StdEncoding.DecodeString(line)
+}
+
+// rejectAuth reports an authentication failure or a malformed response.
+func (s *imapSession) rejectAuth(tag string, err error) error {
+	if _, ok := err.(base64.CorruptInputError); ok {
+		s.reply("%s BAD invalid SASL response", tag)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	s.reply("%s NO [AUTHENTICATIONFAILED] credentials rejected", tag)
+	return nil
+}
+
+// authPlain handles SASL PLAIN. The credential arrives either as an inline
+// initial response or after a continuation, decoding to
+// "[authzid]\x00authcid\x00password".
+func (s *imapSession) authPlain(tag, initial string) error {
+	var decoded []byte
+	var err error
+	if initial != "" && initial != "=" {
+		decoded, err = base64.StdEncoding.DecodeString(initial)
+	} else {
+		decoded, err = s.continuation("")
+	}
+	if err != nil {
+		return s.rejectAuth(tag, err)
 	}
 
-	// Split on NUL: [authzid] NUL authcid NUL password
 	fields := strings.Split(string(decoded), "\x00")
 	user, pass := "", ""
-	if len(fields) == 3 {
-		user = fields[1]
-		pass = fields[2]
-	} else if len(fields) == 2 {
-		user = fields[0]
-		pass = fields[1]
+	switch len(fields) {
+	case 3:
+		user, pass = fields[1], fields[2]
+	case 2:
+		user, pass = fields[0], fields[1]
 	}
-	c.imapRecord(conn, user, pass, "AUTHENTICATE PLAIN")
-	writer.WriteString(fmt.Sprintf("%s NO [AUTHENTICATIONFAILED] credentials rejected\r\n", tag))
-	writer.Flush()
-	return true
+	s.conf.record(s.conn, "AUTHENTICATE PLAIN", map[string]string{
+		"username": user,
+		"password": pass,
+	})
+	return s.rejectAuth(tag, nil)
 }
 
-// imapAuthLogin handles SASL LOGIN: the server base64-prompts for the
-// username, then the password, each sent base64-encoded by the client. A
-// client may supply the (base64) username inline as a SASL initial
-// response, in which case the Username prompt is skipped.
-func imapAuthLogin(c *ConfIMAP, conn net.Conn, reader *bufio.Reader, writer *bufio.Writer, tag, initial string) bool {
+// authLogin handles SASL LOGIN, prompting for a base64 username and password
+// in turn. An inline initial response supplies the username.
+func (s *imapSession) authLogin(tag, initial string) error {
 	var user []byte
-	if initial != "" {
-		user, _ = base64.StdEncoding.DecodeString(initial)
+	var err error
+	if initial != "" && initial != "=" {
+		user, err = base64.StdEncoding.DecodeString(initial)
 	} else {
-		// Prompt "Username:" (base64).
-		writer.WriteString("+ " + base64.StdEncoding.EncodeToString([]byte("Username:")) + "\r\n")
-		writer.Flush()
-		userResp, err := reader.ReadString('\n')
-		if err != nil {
-			return true
-		}
-		user, _ = base64.StdEncoding.DecodeString(strings.TrimRight(userResp, "\r\n"))
+		user, err = s.continuation(base64.StdEncoding.EncodeToString([]byte("Username:")))
 	}
-
-	// Prompt "Password:" (base64).
-	writer.WriteString("+ " + base64.StdEncoding.EncodeToString([]byte("Password:")) + "\r\n")
-	writer.Flush()
-	passResp, err := reader.ReadString('\n')
 	if err != nil {
-		return true
+		return s.rejectAuth(tag, err)
 	}
-	pass, _ := base64.StdEncoding.DecodeString(strings.TrimRight(passResp, "\r\n"))
 
-	c.imapRecord(conn, string(user), string(pass), "AUTHENTICATE LOGIN")
-	writer.WriteString(fmt.Sprintf("%s NO [AUTHENTICATIONFAILED] credentials rejected\r\n", tag))
-	writer.Flush()
-	return true
+	pass, err := s.continuation(base64.StdEncoding.EncodeToString([]byte("Password:")))
+	if err != nil {
+		return s.rejectAuth(tag, err)
+	}
+
+	s.conf.record(s.conn, "AUTHENTICATE LOGIN", map[string]string{
+		"username": string(user),
+		"password": string(pass),
+	})
+	return s.rejectAuth(tag, nil)
 }
 
-// IMAPCramChallenge is the fixed CRAM-MD5 challenge presented to every
-// client. As with the fixed VNC and NTLM challenges, a constant challenge
-// lets the captured HMAC be cracked offline with precomputed material.
-// RFC 2195 challenges are formatted like a message-id; this one is
-// arbitrary but constant.
-const IMAPCramChallenge = "<1896.flamingo@localhost>"
-
-// imapAuthCramMD5 handles SASL CRAM-MD5. The password itself never crosses
-// the wire: the client returns HMAC-MD5(password, challenge). flamingo
-// captures the username and that HMAC, which is crackable offline
-// (hashcat mode 10200). The server sends a base64 challenge, and the client
-// replies with base64("<username> <hex-hmac>").
-func imapAuthCramMD5(c *ConfIMAP, conn net.Conn, reader *bufio.Reader, writer *bufio.Writer, tag string) bool {
-	// Send the base64-encoded challenge as a continuation.
+// authCramMD5 handles SASL CRAM-MD5. The client returns
+// HMAC-MD5(password, challenge), which is recorded in hashcat mode 10200
+// format for offline cracking.
+func (s *imapSession) authCramMD5(tag string) error {
 	challB64 := base64.StdEncoding.EncodeToString([]byte(IMAPCramChallenge))
-	writer.WriteString("+ " + challB64 + "\r\n")
-	writer.Flush()
-
-	resp, err := reader.ReadString('\n')
+	decoded, err := s.continuation(challB64)
 	if err != nil {
-		return true
-	}
-	resp = strings.TrimRight(resp, "\r\n")
-
-	decoded, err := base64.StdEncoding.DecodeString(resp)
-	if err != nil {
-		writer.WriteString(fmt.Sprintf("%s NO invalid base64\r\n", tag))
-		writer.Flush()
-		return false
+		return s.rejectAuth(tag, err)
 	}
 
-	// Decoded form: "<username> <hex-hmac-md5>".
-	username, hexHMAC := "", ""
-	if sp := strings.LastIndexByte(string(decoded), ' '); sp >= 0 {
-		username = string(decoded[:sp])
-		hexHMAC = string(decoded[sp+1:])
-	} else {
-		username = string(decoded)
+	// The decoded response is "<username> <hex-hmac-md5>"
+	username, hexHMAC := string(decoded), ""
+	if sp := strings.LastIndexByte(username, ' '); sp >= 0 {
+		username, hexHMAC = username[:sp], username[sp+1:]
 	}
 
-	// hashcat mode 10200 format: $cram_md5$<base64 challenge>$<base64 response>
-	// where the response is base64("<username> <hex-hmac>"), i.e. the raw
-	// value the client sent.
-	hashcat := fmt.Sprintf("$cram_md5$%s$%s", challB64, resp)
-
-	c.RecordWriter.Record(
-		"credential",
-		c.pname(),
-		conn.RemoteAddr().String(),
-		map[string]string{
-			"_server":   fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
-			"username":  username,
-			"challenge": IMAPCramChallenge,
-			"response":  hexHMAC,
-			"hashcat":   hashcat,
-			"method":    "AUTHENTICATE CRAM-MD5",
-		},
-	)
-	writer.WriteString(fmt.Sprintf("%s NO [AUTHENTICATIONFAILED] credentials rejected\r\n", tag))
-	writer.Flush()
-	return true
+	s.conf.record(s.conn, "AUTHENTICATE CRAM-MD5", map[string]string{
+		"username":  username,
+		"challenge": IMAPCramChallenge,
+		"response":  hexHMAC,
+		"hashcat":   fmt.Sprintf("$cram_md5$%s$%s", challB64, base64.StdEncoding.EncodeToString(decoded)),
+	})
+	return s.rejectAuth(tag, nil)
 }
 
-// imapParseLogin parses "LOGIN user pass" arguments, stripping optional
-// surrounding double quotes from each.
-func imapParseLogin(args string) (string, string) {
-	user, pass := "", ""
-	fields := imapSplitArgs(args)
-	if len(fields) >= 1 {
-		user = fields[0]
-	}
-	if len(fields) >= 2 {
-		pass = fields[1]
-	}
-	return user, pass
-}
-
-// imapSplitArgs splits a LOGIN argument string into fields, honoring simple
-// double-quoted strings so a password containing spaces stays intact.
-func imapSplitArgs(s string) []string {
+// readAstrings parses space-separated IMAP astring arguments from a command
+// line, handling atoms, quoted strings with backslash escapes, and both
+// synchronizing and non-synchronizing literals.
+func (s *imapSession) readAstrings(line string) ([]string, error) {
 	var fields []string
-	var cur strings.Builder
-	inQuote := false
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		switch {
-		case ch == '"':
-			inQuote = !inQuote
-		case ch == ' ' && !inQuote:
-			if cur.Len() > 0 {
-				fields = append(fields, cur.String())
-				cur.Reset()
+	for {
+		line = strings.TrimLeft(line, " ")
+		if line == "" {
+			return fields, nil
+		}
+
+		switch line[0] {
+		case '"':
+			var sb strings.Builder
+			i := 1
+			for ; i < len(line) && line[i] != '"'; i++ {
+				if line[i] == '\\' && i+1 < len(line) {
+					i++
+				}
+				sb.WriteByte(line[i])
 			}
+			fields = append(fields, sb.String())
+			if i < len(line) {
+				i++
+			}
+			line = line[i:]
+
+		case '{':
+			// A literal is always the last item on its line
+			end := strings.IndexByte(line, '}')
+			if end < 0 || end != len(line)-1 {
+				return fields, fmt.Errorf("malformed literal")
+			}
+			spec := line[1:end]
+			nonSync := strings.HasSuffix(spec, "+")
+			size, err := strconv.Atoi(strings.TrimSuffix(spec, "+"))
+			if err != nil || size < 0 || size > imapMaxLiteral {
+				return fields, fmt.Errorf("invalid literal size")
+			}
+			if !nonSync {
+				s.reply("+ ready")
+			}
+			buf := make([]byte, size)
+			if _, err := io.ReadFull(s.reader, buf); err != nil {
+				return fields, err
+			}
+			fields = append(fields, string(buf))
+			line, err = s.readLine()
+			if err != nil {
+				return fields, err
+			}
+
 		default:
-			cur.WriteByte(ch)
+			end := strings.IndexByte(line, ' ')
+			if end < 0 {
+				end = len(line)
+			}
+			fields = append(fields, line[:end])
+			line = line[end:]
 		}
 	}
-	if cur.Len() > 0 {
-		fields = append(fields, cur.String())
-	}
-	return fields
 }
