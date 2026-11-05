@@ -18,6 +18,8 @@ type flamingoParameters struct {
 	Verbose            bool
 	DontIgnoreFailures bool
 	FTPPorts           string
+	IMAPPorts          string
+	IMAPSPorts         string
 	DNSPorts           string
 	DNSResolveToIP     string
 	SNMPPorts          string
@@ -65,7 +67,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
 	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "dont-ignore", "", false, "Treat individual listener failures as fatal")
 
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp", "Specify a comma-separated list of protocols")
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp,imap", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -84,6 +86,10 @@ func init() {
 
 	// FTP parameters
 	rootCmd.Flags().StringVarP(&params.FTPPorts, "ftp-ports", "", "21", "The list of TCP ports to listen on for FTP")
+
+	// IMAP(S) parameters
+	rootCmd.Flags().StringVarP(&params.IMAPPorts, "imap-ports", "", "143", "The list of TCP ports to listen on for IMAP")
+	rootCmd.Flags().StringVarP(&params.IMAPSPorts, "imaps-ports", "", "993", "The list of TCP ports to listen on for IMAPS")
 
 	// HTTP(S) parameters
 	rootCmd.Flags().StringVarP(&params.HTTPPorts, "http-ports", "", "80", "The list of TCP ports to listen on for HTTP")

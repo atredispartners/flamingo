@@ -132,6 +132,12 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupFTP(rw)
 	}
 
+	// IMAP/IMAPS
+	if _, enabled := protocols["imap"]; enabled {
+		setupIMAP(rw)
+		setupIMAPS(rw)
+	}
+
 	// Make sure at least one capture is running
 	if protocolCount == 0 {
 		log.Fatalf("at least one protocol must be enabled")
@@ -612,6 +618,65 @@ func setupFTP(rw *flamingo.RecordWriter) {
 		}
 		protocolCount++
 		cleanupHandlers = append(cleanupHandlers, func() { ftpConf.Shutdown() })
+	}
+}
+
+func setupIMAP(rw *flamingo.RecordWriter) {
+
+	// Create a listener for each port
+	imapPorts, err := flamingo.CrackPorts(params.IMAPPorts)
+	if err != nil {
+		log.Fatalf("failed to process imap ports %s: %s", params.IMAPPorts, err)
+	}
+
+	for _, port := range imapPorts {
+		imapConf := flamingo.NewConfIMAP()
+		imapConf.BindPort = uint16(port)
+		imapConf.RecordWriter = rw
+		// The plaintext listener stays plaintext, but still needs a cert so
+		// it can honor a STARTTLS upgrade.
+		imapConf.TLSCert = params.TLSCertData
+		imapConf.TLSKey = params.TLSKeyData
+		imapConf.TLSName = params.TLSName
+		if err := flamingo.SpawnIMAP(imapConf); err != nil {
+			if params.DontIgnoreFailures {
+				log.Fatalf("failed to start imap server %s:%d: %q", imapConf.BindHost, imapConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start imap server %s:%d: %q", imapConf.BindHost, imapConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { imapConf.Shutdown() })
+	}
+}
+
+func setupIMAPS(rw *flamingo.RecordWriter) {
+
+	// Create a listener for each port
+	imapsPorts, err := flamingo.CrackPorts(params.IMAPSPorts)
+	if err != nil {
+		log.Fatalf("failed to process imaps ports %s: %s", params.IMAPSPorts, err)
+	}
+
+	for _, port := range imapsPorts {
+		imapConf := flamingo.NewConfIMAP()
+		imapConf.BindPort = uint16(port)
+		imapConf.RecordWriter = rw
+		imapConf.TLS = true
+		imapConf.TLSCert = params.TLSCertData
+		imapConf.TLSKey = params.TLSKeyData
+		imapConf.TLSName = params.TLSName
+		if err := flamingo.SpawnIMAP(imapConf); err != nil {
+			if params.DontIgnoreFailures {
+				log.Fatalf("failed to start imaps server %s:%d: %q", imapConf.BindHost, imapConf.BindPort, err)
+			} else {
+				log.Errorf("failed to start imaps server %s:%d: %q", imapConf.BindHost, imapConf.BindPort, err)
+			}
+			continue
+		}
+		protocolCount++
+		cleanupHandlers = append(cleanupHandlers, func() { imapConf.Shutdown() })
 	}
 }
 
