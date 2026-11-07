@@ -325,7 +325,7 @@ func ntlmToHashcat(h *ntlm.AuthenticateMessage, ntlmVer int) (out string) {
 			v2 = "0000000000000000000000000000000000000000000000000000000000000000"
 		}
 		lm := v2[0:32]
-		nt := v2[32 : len(v2)-1]
+		nt := v2[32:]
 		out = fmt.Sprintf(template, un, dn, ch, lm, nt)
 	}
 	return

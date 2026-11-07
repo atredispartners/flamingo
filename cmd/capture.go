@@ -143,6 +143,69 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupIMAPS(rw)
 	}
 
+	// POP3/POP3S
+	if _, enabled := protocols["pop3"]; enabled {
+		setupPOP3(rw)
+		setupPOP3S(rw)
+	}
+
+	// SMTP/SMTPS
+	if _, enabled := protocols["smtp"]; enabled {
+		setupSMTP(rw)
+		setupSMTPS(rw)
+	}
+
+	// Telnet
+	if _, enabled := protocols["telnet"]; enabled {
+		setupTelnet(rw)
+	}
+
+	// MySQL
+	if _, enabled := protocols["mysql"]; enabled {
+		setupMySQL(rw)
+	}
+
+	// PostgreSQL
+	if _, enabled := protocols["postgres"]; enabled {
+		setupPostgres(rw)
+	}
+
+	// MSSQL
+	if _, enabled := protocols["mssql"]; enabled {
+		setupMSSQL(rw)
+	}
+
+	// Redis
+	if _, enabled := protocols["redis"]; enabled {
+		setupRedis(rw)
+	}
+
+	// MongoDB
+	if _, enabled := protocols["mongodb"]; enabled {
+		setupMongoDB(rw)
+	}
+
+	// AMQP/AMQPS
+	if _, enabled := protocols["amqp"]; enabled {
+		setupAMQP(rw)
+		setupAMQPS(rw)
+	}
+
+	// SOCKS
+	if _, enabled := protocols["socks"]; enabled {
+		setupSOCKS(rw)
+	}
+
+	// SIP
+	if _, enabled := protocols["sip"]; enabled {
+		setupSIP(rw)
+	}
+
+	// RDP
+	if _, enabled := protocols["rdp"]; enabled {
+		setupRDP(rw)
+	}
+
 	// Make sure at least one capture is running
 	if protocolCount == 0 {
 		log.Fatalf("at least one protocol must be enabled")

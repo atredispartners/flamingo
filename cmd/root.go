@@ -32,6 +32,21 @@ type flamingoParameters struct {
 	VNCPorts           string
 	IMAPPorts          string
 	IMAPSPorts         string
+	POP3Ports          string
+	POP3SPorts         string
+	SMTPPorts          string
+	SMTPSPorts         string
+	TelnetPorts        string
+	MySQLPorts         string
+	PostgresPorts      string
+	MSSQLPorts         string
+	RedisPorts         string
+	MongoDBPorts       string
+	AMQPPorts          string
+	AMQPSPorts         string
+	SOCKSPorts         string
+	SIPPorts           string
+	RDPPorts           string
 	TLSCertFile        string
 	TLSCertData        string
 	TLSKeyFile         string
@@ -68,7 +83,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
 	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "dont-ignore", "", false, "Treat individual listener failures as fatal")
 
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp,vnc,imap", "Specify a comma-separated list of protocols")
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,redis,mongodb,amqp,socks,sip,rdp", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -100,6 +115,37 @@ func init() {
 	// IMAP(S) parameters
 	rootCmd.Flags().StringVarP(&params.IMAPPorts, "imap-ports", "", "143", "The list of TCP ports to listen on for IMAP")
 	rootCmd.Flags().StringVarP(&params.IMAPSPorts, "imaps-ports", "", "993", "The list of TCP ports to listen on for IMAPS")
+
+	// POP3(S) parameters
+	rootCmd.Flags().StringVarP(&params.POP3Ports, "pop3-ports", "", "110", "The list of TCP ports to listen on for POP3")
+	rootCmd.Flags().StringVarP(&params.POP3SPorts, "pop3s-ports", "", "995", "The list of TCP ports to listen on for POP3S")
+
+	// SMTP(S) parameters
+	rootCmd.Flags().StringVarP(&params.SMTPPorts, "smtp-ports", "", "25,587", "The list of TCP ports to listen on for SMTP")
+	rootCmd.Flags().StringVarP(&params.SMTPSPorts, "smtps-ports", "", "465", "The list of TCP ports to listen on for SMTPS")
+
+	// Telnet parameters
+	rootCmd.Flags().StringVarP(&params.TelnetPorts, "telnet-ports", "", "23", "The list of TCP ports to listen on for Telnet")
+
+	// Database parameters
+	rootCmd.Flags().StringVarP(&params.MySQLPorts, "mysql-ports", "", "3306", "The list of TCP ports to listen on for MySQL")
+	rootCmd.Flags().StringVarP(&params.PostgresPorts, "postgres-ports", "", "5432", "The list of TCP ports to listen on for PostgreSQL")
+	rootCmd.Flags().StringVarP(&params.MSSQLPorts, "mssql-ports", "", "1433", "The list of TCP ports to listen on for MSSQL")
+	rootCmd.Flags().StringVarP(&params.RedisPorts, "redis-ports", "", "6379", "The list of TCP ports to listen on for Redis")
+	rootCmd.Flags().StringVarP(&params.MongoDBPorts, "mongodb-ports", "", "27017", "The list of TCP ports to listen on for MongoDB")
+
+	// AMQP(S) parameters
+	rootCmd.Flags().StringVarP(&params.AMQPPorts, "amqp-ports", "", "5672", "The list of TCP ports to listen on for AMQP")
+	rootCmd.Flags().StringVarP(&params.AMQPSPorts, "amqps-ports", "", "5671", "The list of TCP ports to listen on for AMQPS")
+
+	// SOCKS parameters
+	rootCmd.Flags().StringVarP(&params.SOCKSPorts, "socks-ports", "", "1080", "The list of TCP ports to listen on for SOCKS")
+
+	// SIP parameters
+	rootCmd.Flags().StringVarP(&params.SIPPorts, "sip-ports", "", "5060", "The list of UDP ports to listen on for SIP")
+
+	// RDP parameters
+	rootCmd.Flags().StringVarP(&params.RDPPorts, "rdp-ports", "", "3389", "The list of TCP ports to listen on for RDP")
 
 	rootCmd.Flags().StringVarP(&params.TLSCertFile, "tls-cert", "", "", "An optional x509 certificate for TLS listeners")
 	rootCmd.Flags().StringVarP(&params.TLSKeyFile, "tls-key", "", "", "An optional x509 key for TLS listeners")

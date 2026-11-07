@@ -2,7 +2,7 @@
 
 A filter-feeding bird. Captures credentials sprayed across the network by various IT and security products.
 
-Currently supports SSH, HTTP, LDAP, DNS, FTP, SNMP, VNC, and IMAP credential collection.
+Currently supports SSH, HTTP, LDAP, DNS, FTP, SNMP, VNC, IMAP, POP3, SMTP, Telnet, MySQL, PostgreSQL, MSSQL, Redis, MongoDB, AMQP, SOCKS, SIP, and RDP credential collection.
 
 Pull requests are encouraged for additional protocols and output destinations.
 
@@ -18,10 +18,22 @@ Pull requests are encouraged for additional protocols and output destinations.
 | SNMP | 161/udp | `--snmp-ports` | Community strings |
 | VNC | 5900/tcp | `--vnc-ports` | DES challenge/response (hashcat mode 14000, john `vnc`) |
 | IMAP/IMAPS | 143/tcp, 993/tcp | `--imap-ports`, `--imaps-ports` | LOGIN, PLAIN, and SASL LOGIN credentials; CRAM-MD5 challenge/response (hashcat mode 10200) |
+| POP3/POP3S | 110/tcp, 995/tcp | `--pop3-ports`, `--pop3s-ports` | USER/PASS, SASL PLAIN and LOGIN credentials; APOP digests; CRAM-MD5 challenge/response (hashcat mode 10200) |
+| SMTP/SMTPS | 25/tcp, 587/tcp, 465/tcp | `--smtp-ports`, `--smtps-ports` | AUTH PLAIN and LOGIN credentials; CRAM-MD5 challenge/response (hashcat mode 10200); NTLM challenge/response (hashcat mode 5600) |
+| Telnet | 23/tcp | `--telnet-ports` | Login prompt username/password attempts |
+| MySQL | 3306/tcp | `--mysql-ports` | mysql_native_password challenge/response (hashcat mode 11200) and cleartext passwords via auth switch |
+| PostgreSQL | 5432/tcp | `--postgres-ports` | Cleartext passwords (SSLRequest upgrades are honored) |
+| MSSQL | 1433/tcp | `--mssql-ports` | TDS LOGIN7 username/password |
+| Redis | 6379/tcp | `--redis-ports` | AUTH and HELLO credentials |
+| MongoDB | 27017/tcp | `--mongodb-ports` | SASL PLAIN credentials; SCRAM-SHA-1/SCRAM-SHA-256 client proofs with the salt, nonces, and auth message |
+| AMQP/AMQPS | 5672/tcp, 5671/tcp | `--amqp-ports`, `--amqps-ports` | PLAIN and AMQPLAIN credentials |
+| SOCKS | 1080/tcp | `--socks-ports` | SOCKS4/4a user IDs and SOCKS5 username/password |
+| SIP | 5060/udp | `--sip-ports` | Digest challenge/response (hashcat mode 11400) |
+| RDP | 3389/tcp | `--rdp-ports` | CredSSP NTLM challenge/response (hashcat mode 5600) and cleartext Client Info passwords from TLS-only clients |
 
-All protocols are enabled by default. The IMAP listener advertises STARTTLS and upgrades the session using the configured TLS certificate, so clients that refuse to authenticate in the clear still submit credentials.
+All protocols are enabled by default. The IMAP, POP3, and SMTP listeners advertise STARTTLS (STLS for POP3) and upgrade the session using the configured TLS certificate, so clients that refuse to authenticate in the clear still submit credentials. The MySQL and PostgreSQL listeners honor in-protocol TLS upgrade requests the same way, and the RDP listener terminates TLS for both NLA (CredSSP) and TLS-only clients.
 
-The HTTPS, LDAPS, IMAPS, and IMAP STARTTLS listeners use a self-signed certificate unless `--tls-cert` and `--tls-key` are provided. The VNC, NTLM, and CRAM-MD5 listeners present a fixed challenge so captured responses can be cracked offline.
+The HTTPS, LDAPS, IMAPS, POP3S, SMTPS, AMQPS, RDP, and STARTTLS-capable listeners use a self-signed certificate unless `--tls-cert` and `--tls-key` are provided. The VNC, NTLM, CRAM-MD5, MySQL, SIP, and MongoDB SCRAM listeners present a fixed challenge, salt, or nonce so captured responses can be cracked offline.
 
 ## Usage
 
@@ -52,7 +64,7 @@ The default is to log credentials to standard output and append to `flamingo.log
 
 ## Options
 
-Use `--protocols` to configure a comma-separated list of enabled protocol listeners. The default is `ssh,snmp,ldap,http,dns,ftp,vnc,imap`.
+Use `--protocols` to configure a comma-separated list of enabled protocol listeners. The default is `ssh,snmp,ldap,http,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,redis,mongodb,amqp,socks,sip,rdp`.
 
 ```
 $ flamingo --protocols imap,ldap --imap-ports 143,1143 --ldap-ports 389
