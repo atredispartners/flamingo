@@ -89,7 +89,7 @@ func SpawnIMAP(c *ConfIMAP) error {
 	if err != nil {
 		return fmt.Errorf("failed to load tls cert for imaps on %s (%s)", addr, err)
 	}
-	listener, err := tls.Listen("tcp", addr, tlsConfig)
+	listener, err := listenTLS("tcp", addr, tlsConfig)
 	if err != nil {
 		return fmt.Errorf("failed to listen with tls on %s (%s)", addr, err)
 	}
@@ -101,14 +101,7 @@ func SpawnIMAP(c *ConfIMAP) error {
 
 // tlsConfig builds a server TLS configuration from the configured key pair.
 func (c *ConfIMAP) tlsConfig() (*tls.Config, error) {
-	kp, err := tls.X509KeyPair([]byte(c.TLSCert), []byte(c.TLSKey))
-	if err != nil {
-		return nil, err
-	}
-	return &tls.Config{
-		ServerName:   c.TLSName,
-		Certificates: []tls.Certificate{kp},
-	}, nil
+	return newServerTLSConfig(c.TLSCert, c.TLSKey, c.TLSName)
 }
 
 func imapStart(c *ConfIMAP) {
@@ -297,8 +290,8 @@ func (s *imapSession) startTLS() error {
 	if err != nil {
 		return err
 	}
-	tlsConn := tls.Server(s.conn, tlsConfig)
-	if err := tlsConn.Handshake(); err != nil {
+	tlsConn, err := handshakeTLS(s.conn, tlsConfig)
+	if err != nil {
 		return err
 	}
 	tlsConn.SetDeadline(time.Now().Add(imapTimeout))

@@ -407,3 +407,80 @@ func TestMSSQLLogin7HeaderOffsets(t *testing.T) {
 		t.Errorf("tds 7.1 parsed change password %q sspi %v", l.ChangePassword, l.SSPI)
 	}
 }
+
+// mssqlLegacyLogin builds a TDS 4.2 login record the way FreeTDS tds_send_login does.
+func mssqlLegacyLogin(host, user, pw, app, server string) []byte {
+	var b []byte
+	str := func(s string, n int) {
+		f := make([]byte, n)
+		copy(f, s)
+		b = append(b, f...)
+		b = append(b, byte(min(len(s), n)))
+	}
+	str(host, 30)
+	str(user, 30)
+	str(pw, 30)
+	str("37876", 30)
+	b = append(b, 0x03, 0x01, 0x06, 0x0a, 0x09, 0x01) // byte order
+	b = append(b, 1, 0, 0)                            // bulk copy, padding
+	b = binary.LittleEndian.AppendUint32(b, 512)
+	b = append(b, 0, 0, 0)
+	str(app, 30)
+	str(server, 30)
+	str("\x00"+string(rune(len(pw)))+pw, 255) // remote password for the default server
+	b = append(b, 4, 2, 0, 0)                 // TDS 4.2
+	str("DB-Library", 10)
+	b = append(b, 0, 0, 0, 0)
+	b = append(b, 0, 13, 17)
+	str("us_english", 30)
+	b = append(b, 0)    // suppress language
+	b = append(b, 0, 0) // old secure
+	b = append(b, 0)    // security flags
+	b = append(b, make([]byte, 10)...)
+	str("", 30) // charset
+	b = append(b, 1)
+	str("512", 6)
+	return append(b, make([]byte, 8)...)
+}
+
+func TestMSSQLLegacyLogin(t *testing.T) {
+	addr, got, conf := mssqlTestServer(t)
+	defer conf.Shutdown()
+
+	rec := mssqlLegacyLogin("WORKSTATION", "sa", "Secret123", "isql", "SQL01")
+	if len(rec) != 572 {
+		t.Fatalf("login record is %d bytes, want 572", len(rec))
+	}
+	conn := mssqlDial(t, addr)
+	defer conn.Close()
+	// Two 512-byte packets, as a client with the default packet size sends them.
+	for off := 0; off < len(rec); {
+		n := min(len(rec)-off, 504)
+		status := byte(0)
+		if off+n == len(rec) {
+			status = 1
+		}
+		if _, err := conn.Write(mssqlPacket(0x02, status, rec[off:off+n])); err != nil {
+			t.Fatal(err)
+		}
+		off += n
+	}
+	resp, _ := io.ReadAll(conn)
+	if len(resp) < 9 || resp[0] != 0x04 || resp[8] != 0xaa || !strings.Contains(string(resp), "Login failed for user 'sa'.") {
+		t.Fatalf("response %q", resp)
+	}
+	cred := mssqlWaitCred(t, got)
+	want := map[string]string{
+		"username": "sa", "password": "Secret123", "hostname": "WORKSTATION", "app_name": "isql",
+		"server_name": "SQL01", "library": "DB-Library", "tds_version": "4.2", "client_pid": "37876",
+		"language": "us_english", "packet_size": "512", "login_record": "tds4",
+	}
+	for k, v := range want {
+		if cred[k] != v {
+			t.Errorf("%s = %q, want %q", k, cred[k], v)
+		}
+	}
+	if _, ok := cred["remote_password"]; ok {
+		t.Errorf("remote password equal to the login password recorded twice")
+	}
+}

@@ -159,14 +159,7 @@ func SpawnRDP(c *ConfRDP) error {
 
 // tlsConfig builds a server TLS configuration from the configured key pair.
 func (c *ConfRDP) tlsConfig() (*tls.Config, error) {
-	kp, err := tls.X509KeyPair([]byte(c.TLSCert), []byte(c.TLSKey))
-	if err != nil {
-		return nil, err
-	}
-	return &tls.Config{
-		ServerName:   c.TLSName,
-		Certificates: []tls.Certificate{kp},
-	}, nil
+	return newServerTLSConfig(c.TLSCert, c.TLSKey, c.TLSName)
 }
 
 func rdpStart(c *ConfRDP) {
@@ -492,8 +485,8 @@ func (s *rdpSession) readMCS() ([]byte, error) {
 // startTLS upgrades the connection in place using the configured
 // certificate.
 func (s *rdpSession) startTLS() error {
-	tlsConn := tls.Server(s.conn, s.conf.tls)
-	if err := tlsConn.Handshake(); err != nil {
+	tlsConn, err := handshakeTLS(s.conn, s.conf.tls)
+	if err != nil {
 		return fmt.Errorf("tls: %w", err)
 	}
 	tlsConn.SetDeadline(time.Now().Add(rdpTimeout))

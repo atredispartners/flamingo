@@ -2,7 +2,6 @@ package flamingo
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -90,15 +89,12 @@ func SpawnHTTP(c *ConfHTTP) error {
 	}
 
 	// Handle TLS listeners
-	tlsConfig := tls.Config{ServerName: c.TLSName}
-	tlsConfig.Certificates = make([]tls.Certificate, 1)
-	kp, err := tls.X509KeyPair([]byte(c.TLSCert), []byte(c.TLSKey))
+	tlsConfig, err := newServerTLSConfig(c.TLSCert, c.TLSKey, c.TLSName)
 	if err != nil {
 		return fmt.Errorf("failed to load tls cert for https on %s:%d (%s)", c.BindHost, c.BindPort, err)
 	}
-	tlsConfig.Certificates = []tls.Certificate{kp}
 
-	listener, err := tls.Listen("tcp", fmt.Sprintf("%s:%d", c.BindHost, c.BindPort), &tlsConfig)
+	listener, err := listenTLS("tcp", fmt.Sprintf("%s:%d", c.BindHost, c.BindPort), tlsConfig)
 	if err != nil {
 		return fmt.Errorf("failed to listen with tls on %s:%d (%s)", c.BindHost, c.BindPort, err)
 	}

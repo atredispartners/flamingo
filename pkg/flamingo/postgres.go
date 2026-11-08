@@ -99,14 +99,7 @@ func SpawnPostgres(c *ConfPostgres) error {
 
 // tlsConfig builds a server TLS configuration from the configured key pair.
 func (c *ConfPostgres) tlsConfig() (*tls.Config, error) {
-	kp, err := tls.X509KeyPair([]byte(c.TLSCert), []byte(c.TLSKey))
-	if err != nil {
-		return nil, err
-	}
-	return &tls.Config{
-		ServerName:   c.TLSName,
-		Certificates: []tls.Certificate{kp},
-	}, nil
+	return newServerTLSConfig(c.TLSCert, c.TLSKey, c.TLSName)
 }
 
 func pgStart(c *ConfPostgres) {
@@ -148,8 +141,8 @@ func (s *pgSession) startTLS() error {
 	if err != nil {
 		return err
 	}
-	tlsConn := tls.Server(s.conn, tlsConfig)
-	if err := tlsConn.Handshake(); err != nil {
+	tlsConn, err := handshakeTLS(s.conn, tlsConfig)
+	if err != nil {
 		return err
 	}
 	tlsConn.SetDeadline(time.Now().Add(pgTimeout))

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -18,6 +20,7 @@ var MSSQLServerName = "SQL01"
 
 // TDS packet types.
 const (
+	mssqlPktLogin    = 0x02 // TDS 4.2 and 5.0 login record
 	mssqlPktTabular  = 0x04
 	mssqlPktLogin7   = 0x10
 	mssqlPktPrelogin = 0x12
@@ -149,7 +152,17 @@ func mssqlHandleConnection(c *ConfMSSQL, conn net.Conn) {
 			c.record(conn, login.fields())
 			mssqlSendError(conn, 18456, fmt.Sprintf("Login failed for user '%s'.", login.Username))
 			return
+		case mssqlPktLogin:
+			fields, err := mssqlParseLegacyLogin(msg)
+			if err != nil {
+				log.Debugf("mssql legacy login from %s: %s", conn.RemoteAddr(), err)
+				return
+			}
+			c.record(conn, fields)
+			mssqlSendLegacyError(conn, 18456, fmt.Sprintf("Login failed for user '%s'.", fields["username"]))
+			return
 		default:
+			log.Debugf("mssql unexpected packet type 0x%02x from %s", typ, conn.RemoteAddr())
 			return
 		}
 	}
@@ -351,6 +364,126 @@ func mssqlSendError(conn net.Conn, number uint32, msg string) {
 	b = le.AppendUint16(b, 0x0002) // DONE_ERROR
 	b = le.AppendUint16(b, 0)
 	b = le.AppendUint64(b, 0)
+	mssqlWrite(conn, mssqlPktTabular, b)
+}
+
+// Offsets in the TDS 4.2/5.0 login record. Each name field is padded to its size
+// and followed by one length byte.
+const (
+	mssqlLLHost       = 0   // client host name, 30
+	mssqlLLUser       = 31  // user name, 30
+	mssqlLLPassword   = 62  // password, 30
+	mssqlLLHostProc   = 93  // host process id, 30
+	mssqlLLApp        = 140 // application name, 30
+	mssqlLLServer     = 171 // server name, 30
+	mssqlLLRemotePw   = 202 // remote passwords, 255
+	mssqlLLTDSVersion = 458 // 4 bytes
+	mssqlLLProgName   = 462 // client library, 10
+	mssqlLLProgVer    = 473 // 4 bytes
+	mssqlLLLanguage   = 480 // language, 30
+	mssqlLLSecFlags   = 514 // bit 0: password encrypted (sent after the login)
+	mssqlLLCharset    = 525 // character set, 30
+	mssqlLLPktSize    = 557 // packet size as text, 6
+	mssqlLLNameLen    = 30
+)
+
+// mssqlParseLegacyLogin decodes a TDS 4.2/5.0 login record into a credential
+// record.
+func mssqlParseLegacyLogin(p []byte) (map[string]string, error) {
+	if len(p) <= mssqlLLPassword+mssqlLLNameLen {
+		return nil, errors.New("short legacy login")
+	}
+	field := func(at, n int) []byte {
+		if at+n >= len(p) {
+			return nil
+		}
+		return p[at : at+min(int(p[at+n]), n)]
+	}
+	str := func(at, n int) string { return mssqlByteString(field(at, n)) }
+	rec := map[string]string{
+		"login_record": "tds4",
+		"method":       "sql",
+		"username":     str(mssqlLLUser, mssqlLLNameLen),
+		"password":     str(mssqlLLPassword, mssqlLLNameLen),
+		"hostname":     str(mssqlLLHost, mssqlLLNameLen),
+		"app_name":     str(mssqlLLApp, mssqlLLNameLen),
+		"server_name":  str(mssqlLLServer, mssqlLLNameLen),
+		"library":      str(mssqlLLProgName, 10),
+	}
+	if rp := field(mssqlLLRemotePw, 255); len(rp) >= 2 {
+		// Pairs of (server name, password), each length-prefixed; an empty name
+		// is the default for every remote server.
+		srvLen := int(rp[0])
+		if 1+srvLen < len(rp) {
+			pwLen := int(rp[1+srvLen])
+			if end := 2 + srvLen + pwLen; end <= len(rp) {
+				if rpw := mssqlByteString(rp[2+srvLen : end]); rpw != rec["password"] {
+					rec["remote_password"] = rpw
+				}
+			}
+		}
+	}
+	if len(p) >= mssqlLLTDSVersion+4 {
+		rec["tds_version"] = fmt.Sprintf("%d.%d", p[mssqlLLTDSVersion], p[mssqlLLTDSVersion+1])
+	}
+	if len(p) >= mssqlLLProgVer+4 {
+		rec["client_version"] = fmt.Sprintf("0x%08x", binary.LittleEndian.Uint32(p[mssqlLLProgVer:]))
+	}
+	proc := str(mssqlLLHostProc, mssqlLLNameLen)
+	if _, err := strconv.ParseUint(proc, 10, 32); err == nil {
+		rec["client_pid"] = proc
+	} else if proc != "" {
+		rec["host_process"] = proc
+	}
+	if v := str(mssqlLLLanguage, mssqlLLNameLen); v != "" {
+		rec["language"] = v
+	}
+	if v := str(mssqlLLCharset, mssqlLLNameLen); v != "" {
+		rec["charset"] = v
+	}
+	if v := str(mssqlLLPktSize, 6); v != "" {
+		rec["packet_size"] = v
+	}
+	if len(p) > mssqlLLSecFlags && p[mssqlLLSecFlags]&0x01 != 0 {
+		rec["password_encrypted"] = "true"
+	}
+	return rec, nil
+}
+
+// mssqlByteString converts a single-byte login string: UTF-8 when it is valid,
+// otherwise Latin-1, so every byte survives.
+func mssqlByteString(b []byte) string {
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	r := make([]rune, len(b))
+	for i, v := range b {
+		r[i] = rune(v)
+	}
+	return string(r)
+}
+
+// mssqlSendLegacyError writes a TDS 4.2 ERROR token (single-byte strings,
+// 2-byte line number) followed by DONE with the error flag and a 4-byte row
+// count.
+func mssqlSendLegacyError(conn net.Conn, number uint32, msg string) {
+	le := binary.LittleEndian
+	var tok []byte
+	tok = le.AppendUint32(tok, number)
+	tok = append(tok, 1, 14) // state, class
+	tok = le.AppendUint16(tok, uint16(len(msg)))
+	tok = append(tok, msg...)
+	tok = append(tok, byte(len(MSSQLServerName)))
+	tok = append(tok, MSSQLServerName...)
+	tok = append(tok, 0)          // procedure name length
+	tok = le.AppendUint16(tok, 1) // line number
+	b := []byte{0xaa}
+	b = le.AppendUint16(b, uint16(len(tok)))
+	b = append(b, tok...)
+	b = append(b, 0xfd)
+	b = le.AppendUint16(b, 0x0002) // DONE_ERROR
+	b = le.AppendUint16(b, 0)
+	b = le.AppendUint32(b, 0)
 	mssqlWrite(conn, mssqlPktTabular, b)
 }
 
