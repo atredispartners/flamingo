@@ -543,42 +543,6 @@ func addrIP(a net.Addr) net.IP {
 	return nil
 }
 
-// defaultIPv4 returns a routable IPv4 address from the first usable interface.
-func defaultIPv4() net.IP {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	for i := range ifaces {
-		ifi := ifaces[i]
-		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		if ip := firstIPv4(&ifi); ip != nil {
-			return ip
-		}
-	}
-	return nil
-}
-
-// defaultIPv6 returns a usable IPv6 address from the first usable interface.
-func defaultIPv6() net.IP {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	for i := range ifaces {
-		ifi := ifaces[i]
-		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		if ip := firstIPv6(&ifi); ip != nil {
-			return ip
-		}
-	}
-	return nil
-}
-
 // srcIP extracts the net.IP from a UDP source address.
 func srcIP(addr net.Addr) net.IP {
 	if u, ok := addr.(*net.UDPAddr); ok {

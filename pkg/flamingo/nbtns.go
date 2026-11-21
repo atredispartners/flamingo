@@ -67,6 +67,12 @@ func (c *ConfNBTNS) Shutdown() {
 
 // SpawnNBTNS starts an NBT-NS poisoner. NBT-NS is broadcast-based and IPv4 only,
 // so no multicast group is joined.
+//
+// Name poisoning is active, not passive: unlike the capture listeners it makes
+// hosts connect to flamingo. It is therefore opt-in and OFF by default; an
+// operator must explicitly enable it (e.g. --protocols nbtns,smb) and should only
+// do so inside an authorized engagement scope. The ScopePolicy and analyze mode
+// exist to keep answers inside that scope.
 func SpawnNBTNS(c *ConfNBTNS) error {
 	v4host, _ := poisonBindHosts(c.BindHost)
 	if v4host == "" {
@@ -183,14 +189,14 @@ func (c *ConfNBTNS) handle(data []byte, src net.Addr, ifIndex int) []byte {
 	return buildNBTNSAnswer(data, spoof, c.TTL)
 }
 
+// chooseSpoof returns the address to answer with: the explicit override when
+// set, otherwise the address of the interface the query arrived on. When neither
+// is available it returns nil and the caller answers nothing.
 func (c *ConfNBTNS) chooseSpoof(ifIndex int) net.IP {
 	if c.SpoofIPv4 != "" {
 		return net.ParseIP(c.SpoofIPv4).To4()
 	}
-	if ip := ifaceIPv4(ifIndex); ip != nil {
-		return ip
-	}
-	return defaultIPv4()
+	return ifaceIPv4(ifIndex)
 }
 
 func (c *ConfNBTNS) record(src net.Addr, name string, suffix byte, answered bool, spoof net.IP, reason string) {

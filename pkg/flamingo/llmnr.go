@@ -73,6 +73,12 @@ func (c *ConfLLMNR) Shutdown() {
 }
 
 // SpawnLLMNR starts an LLMNR poisoner listening on the configured port.
+//
+// Name poisoning is active, not passive: unlike the capture listeners it makes
+// hosts connect to flamingo. It is therefore opt-in and OFF by default; an
+// operator must explicitly enable it (e.g. --protocols llmnr,nbtns,smb) and
+// should only do so inside an authorized engagement scope. The ScopePolicy and
+// analyze mode exist to keep answers inside that scope.
 func SpawnLLMNR(c *ConfLLMNR) error {
 	v4host, v6host := poisonBindHosts(c.BindHost)
 
@@ -202,23 +208,20 @@ func (c *ConfLLMNR) handle(data []byte, src net.Addr, ifIndex int) []byte {
 	return buildLLMNRAnswer(tid, name, aname, wantV6, spoof, c.TTL)
 }
 
+// chooseSpoof returns the address to answer with: the explicit override when
+// set, otherwise the address of the interface the query arrived on. When neither
+// is available it returns nil and the caller answers nothing.
 func (c *ConfLLMNR) chooseSpoof(wantV6 bool, ifIndex int) net.IP {
 	if wantV6 {
 		if c.SpoofIPv6 != "" {
 			return net.ParseIP(c.SpoofIPv6)
 		}
-		if ip := ifaceIPv6(ifIndex); ip != nil {
-			return ip
-		}
-		return defaultIPv6()
+		return ifaceIPv6(ifIndex)
 	}
 	if c.SpoofIPv4 != "" {
 		return net.ParseIP(c.SpoofIPv4).To4()
 	}
-	if ip := ifaceIPv4(ifIndex); ip != nil {
-		return ip
-	}
-	return defaultIPv4()
+	return ifaceIPv4(ifIndex)
 }
 
 func (c *ConfLLMNR) record(src net.Addr, name, qtype string, answered bool, spoof net.IP, reason string) {
