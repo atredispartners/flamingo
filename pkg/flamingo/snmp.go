@@ -46,10 +46,12 @@ func NewConfSNMP() *ConfSNMP {
 	}
 }
 
+// snmpDecoders handles the community-string versions. SNMPv3 is decoded by
+// snmpParseV3 instead: gosnmp's v3 path wants the USM keys up front, and the
+// capture needs byte offsets into the original datagram that a decode-to-struct
+// cannot give back.
 var snmpDecoders = []*gosnmp.GoSNMP{
-	&gosnmp.GoSNMP{Version: gosnmp.Version2c},
-	// TODO: Do something with SNMP v3 requests
-	// &gosnmp.GoSNMP{Version: gosnmp.Version3},
+	{Version: gosnmp.Version2c},
 }
 
 // SpawnSNMP starts a logging SNMP server
@@ -104,6 +106,11 @@ func snmpProcess(c *ConfSNMP, raddr net.Addr, data []byte) {
 }
 
 func snmpProcessData(c *ConfSNMP, raddr net.Addr, data []byte) {
+	if v, ok := snmpMessageVersion(data); ok && v == snmpVersion3 {
+		snmpProcessV3(c, raddr, data)
+		return
+	}
+
 	for _, decoder := range snmpDecoders {
 		res, err := decoder.SnmpDecodePacket(data)
 		if err != nil {
@@ -115,7 +122,6 @@ func snmpProcessData(c *ConfSNMP, raddr net.Addr, data []byte) {
 		}
 
 		// TODO
-		// - Handle SNMP v3
 		// - Handle SNMP Traps
 
 		c.RecordWriter.Record("credential", "snmp", raddr.String(), map[string]string{
