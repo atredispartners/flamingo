@@ -18,6 +18,7 @@ require (
 require (
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/mandiant/gopacket v0.0.0-20260719170219-627c8b47e731 // indirect
 	github.com/spf13/pflag v1.1.0 // indirect
 	github.com/weppos/publicsuffix-go v0.50.3 // indirect
 	golang.org/x/text v0.44.0 // indirect
