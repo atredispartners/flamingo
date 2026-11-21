@@ -206,6 +206,11 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupRDP(rw)
 	}
 
+	// Kerberos
+	if _, enabled := protocols["kerberos"]; enabled {
+		setupKerberos(rw)
+	}
+
 	// SQL Server Browser
 	if _, enabled := protocols["mssql-browser"]; enabled {
 		setupMSSQLBrowser(rw)

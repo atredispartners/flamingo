@@ -216,3 +216,13 @@ func setupMSSQLBrowser(rw *flamingo.RecordWriter) {
 		return conf.Shutdown, flamingo.SpawnMSSQLBrowser(conf)
 	})
 }
+
+func setupKerberos(rw *flamingo.RecordWriter) {
+	startListeners("kerberos", params.KerberosPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfKerberos()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.ForceNTLM = params.KerberosForceNTLM
+		return conf.Shutdown, flamingo.SpawnKerberos(conf)
+	})
+}
