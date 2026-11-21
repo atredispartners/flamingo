@@ -42,16 +42,19 @@ func (c *ConfLDAP) Shutdown() {
 	}
 }
 
+// proto is the protocol name this listener records credentials under
+func (c *ConfLDAP) proto() string {
+	if c.TLS {
+		return "ldaps"
+	}
+	return "ldap"
+}
+
 // Bind captures an LDAP bind request
 func (c *ConfLDAP) Bind(bindDN string, pass string, conn net.Conn) (ldap.LDAPResultCode, error) {
-	pname := "ldap"
-	if c.TLS {
-		pname = "ldaps"
-	}
-
 	c.RecordWriter.Record(
 		"credential",
-		pname,
+		c.proto(),
 		conn.RemoteAddr().String(),
 		map[string]string{
 			"username": bindDN,
@@ -105,11 +108,7 @@ func SpawnLDAP(c *ConfLDAP) error {
 }
 
 func startLDAP(c *ConfLDAP) {
-	pname := "ldap"
-	if c.TLS {
-		pname = "ldaps"
-	}
-	log.Debugf("%s is listening on %s:%d", pname, c.BindHost, c.BindPort)
+	log.Debugf("%s is listening on %s:%d", c.proto(), c.BindHost, c.BindPort)
 	err := c.server.Serve(c.listener)
 	if err != nil {
 		log.Debugf("ldap server exited with error %s", err)
