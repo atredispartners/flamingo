@@ -206,6 +206,33 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupRDP(rw)
 	}
 
+	// Name poisoning (LLMNR, NBT-NS, mDNS). Deliberately absent from the
+	// default --protocols list: every other listener waits to be connected to,
+	// while a poisoner answers name queries that were not addressed to
+	// flamingo at all. That is an active step on someone else's network, so it
+	// is opt-in and announced.
+	poisoners := []string{}
+	if _, enabled := protocols["llmnr"]; enabled {
+		setupLLMNR(rw)
+		poisoners = append(poisoners, "llmnr")
+	}
+	if _, enabled := protocols["nbtns"]; enabled {
+		setupNBTNS(rw)
+		poisoners = append(poisoners, "nbt-ns")
+	}
+	if _, enabled := protocols["mdns"]; enabled {
+		setupMDNS(rw)
+		poisoners = append(poisoners, "mdns")
+	}
+	if len(poisoners) > 0 && !params.Quiet {
+		mode := "answering queries"
+		if poisonParams.Analyze {
+			mode = "analyze mode, answering nothing"
+		}
+		fmt.Fprintf(os.Stderr, "name poisoning active (%s): %s\n",
+			strings.Join(poisoners, ", "), mode)
+	}
+
 	// Make sure at least one capture is running
 	if protocolCount == 0 {
 		log.Fatalf("at least one protocol must be enabled")

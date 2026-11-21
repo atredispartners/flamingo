@@ -304,11 +304,43 @@ func NewScopePolicy(respondTo, dontRespondTo, respondToName, dontRespondToName, 
 	return p, nil
 }
 
+// Default deny entries for the poisoner scope policy. ISATAP is an automatic
+// tunnelling name that Windows hosts query constantly and that no operator
+// wants to answer; _dosvc is Delivery Optimization's peer-discovery suffix,
+// equally noisy. Both are also the command-line defaults.
+const (
+	defaultDontRespondToName = "ISATAP"
+	defaultDontRespondToTLD  = "_dosvc"
+)
+
+// DefaultDontRespondToName and DefaultDontRespondToTLD expose the default deny
+// entries so the command line and the library agree on one source of truth.
+const (
+	DefaultDontRespondToName = defaultDontRespondToName
+	DefaultDontRespondToTLD  = defaultDontRespondToTLD
+)
+
+// DefaultScopePolicy returns the policy the NewConf constructors install, and
+// matches the command-line defaults: answer everything except the names and
+// suffixes that are noisy or pointless to poison.
+func DefaultScopePolicy() *ScopePolicy {
+	return &ScopePolicy{
+		DontRespondToName: []string{defaultDontRespondToName},
+		DontRespondToTLD:  []string{defaultDontRespondToTLD},
+	}
+}
+
 // ShouldRespond reports whether the poisoner should answer a query from srcIP
 // for name. When it should not, the returned reason explains why, for logging.
+//
+// A nil policy answers nothing. Poisoners transmit answers to queries that
+// were not addressed to them, so the absence of a scope policy is treated as
+// "no scope has been authorized" rather than "anything goes". The NewConf
+// constructors install DefaultScopePolicy, so this only bites a caller that
+// clears the field deliberately.
 func (p *ScopePolicy) ShouldRespond(srcIP net.IP, name string) (bool, string) {
 	if p == nil {
-		return true, ""
+		return false, "no scope policy configured"
 	}
 	if p.Analyze {
 		return false, "analyze mode"

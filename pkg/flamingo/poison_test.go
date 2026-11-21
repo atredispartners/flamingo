@@ -25,10 +25,45 @@ func TestScopePolicyAnalyze(t *testing.T) {
 	}
 }
 
-func TestScopePolicyNilRespondsToAll(t *testing.T) {
+// TestScopePolicyNilAnswersNothing pins the fail-closed default. A poisoner
+// transmits answers to queries that were not addressed to it, so a missing
+// scope policy must mean "nothing authorized", not "anything goes".
+func TestScopePolicyNilAnswersNothing(t *testing.T) {
 	var p *ScopePolicy
-	if ok, _ := p.ShouldRespond(net.ParseIP("10.0.0.5"), "anything"); !ok {
-		t.Errorf("nil policy should respond to all")
+	ok, reason := p.ShouldRespond(net.ParseIP("10.0.0.5"), "anything")
+	if ok {
+		t.Errorf("nil policy answered a query; it must answer nothing")
+	}
+	if reason != "no scope policy configured" {
+		t.Errorf("reason = %q, want %q", reason, "no scope policy configured")
+	}
+}
+
+// TestDefaultScopePolicyAnswers checks the policy the NewConf constructors
+// install: it answers ordinary names but not the noisy defaults.
+func TestDefaultScopePolicyAnswers(t *testing.T) {
+	p := DefaultScopePolicy()
+	if ok, reason := p.ShouldRespond(net.ParseIP("10.0.0.5"), "fileserver"); !ok {
+		t.Errorf("default policy refused an ordinary name: %s", reason)
+	}
+	for _, name := range []string{"ISATAP", "isatap", "host._dosvc"} {
+		if ok, _ := p.ShouldRespond(net.ParseIP("10.0.0.5"), name); ok {
+			t.Errorf("default policy answered %q, want refusal", name)
+		}
+	}
+}
+
+// TestNewConfInstallsScopePolicy guards against a constructor regressing to a
+// nil policy, which would silently make that listener answer nothing.
+func TestNewConfInstallsScopePolicy(t *testing.T) {
+	if NewConfLLMNR().Policy == nil {
+		t.Error("NewConfLLMNR left Policy nil")
+	}
+	if NewConfMDNS().Policy == nil {
+		t.Error("NewConfMDNS left Policy nil")
+	}
+	if NewConfNBTNS().Policy == nil {
+		t.Error("NewConfNBTNS left Policy nil")
 	}
 }
 

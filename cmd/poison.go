@@ -51,8 +51,8 @@ func init() {
 	rootCmd.Flags().StringVarP(&poisonParams.RespondTo, "poison-respond-to", "", "", "Only answer queries from these source addresses (comma list of IP, CIDR, or range)")
 	rootCmd.Flags().StringVarP(&poisonParams.DontRespondTo, "poison-dont-respond-to", "", "", "Never answer queries from these source addresses (comma list of IP, CIDR, or range)")
 	rootCmd.Flags().StringVarP(&poisonParams.RespondToName, "poison-respond-to-name", "", "", "Only answer queries for these names (comma list, case-insensitive)")
-	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToName, "poison-dont-respond-to-name", "", "ISATAP", "Never answer queries for these names (comma list, case-insensitive)")
-	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToTLD, "poison-dont-respond-to-tld", "", "_dosvc", "Never answer queries whose name ends with these suffixes (comma list)")
+	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToName, "poison-dont-respond-to-name", "", flamingo.DefaultDontRespondToName, "Never answer queries for these names (comma list, case-insensitive)")
+	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToTLD, "poison-dont-respond-to-tld", "", flamingo.DefaultDontRespondToTLD, "Never answer queries whose name ends with these suffixes (comma list)")
 	rootCmd.Flags().BoolVarP(&poisonParams.Analyze, "poison-analyze", "", false, "Analyze mode: observe and log poisoner queries but answer nothing")
 }
 

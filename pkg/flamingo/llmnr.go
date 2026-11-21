@@ -46,6 +46,7 @@ func NewConfLLMNR() *ConfLLMNR {
 		BindPort: 5355,
 		BindHost: "[::]",
 		TTL:      defaultLLMNRTTL,
+		Policy:   DefaultScopePolicy(),
 	}
 }
 

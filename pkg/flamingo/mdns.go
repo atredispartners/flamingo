@@ -39,6 +39,7 @@ func NewConfMDNS() *ConfMDNS {
 		BindPort: 5353,
 		BindHost: "[::]",
 		TTL:      defaultMDNSTTL,
+		Policy:   DefaultScopePolicy(),
 	}
 }
 

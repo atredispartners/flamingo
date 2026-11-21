@@ -42,6 +42,7 @@ func NewConfNBTNS() *ConfNBTNS {
 		BindPort: 137,
 		BindHost: "[::]",
 		TTL:      defaultNBTNSTTL,
+		Policy:   DefaultScopePolicy(),
 	}
 }
 
