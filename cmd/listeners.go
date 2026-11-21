@@ -226,3 +226,37 @@ func setupKerberos(rw *flamingo.RecordWriter) {
 		return conf.Shutdown, flamingo.SpawnKerberos(conf)
 	})
 }
+
+func setupMQTT(rw *flamingo.RecordWriter) {
+	startListeners("mqtt", params.MQTTPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfMQTT()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		return conf.Shutdown, flamingo.SpawnMQTT(conf)
+	})
+}
+
+// setupHTTPProxy starts the authenticating proxy listeners. The proxy only
+// ever answers 407, so it transmits nothing unsolicited and is on by default;
+// serving a WPAD file, which actively redirects a client's traffic, is not.
+func setupHTTPProxy(rw *flamingo.RecordWriter) {
+	startListeners("http-proxy", params.HTTPProxyPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfHTTP()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.BasicRealm = params.HTTPBasicRealm
+		conf.AuthMode = params.HTTPAuthMode
+		conf.ProxyAuth = true
+		return conf.Shutdown, flamingo.SpawnHTTP(conf)
+	})
+}
+
+// wpadProxyPort is the port a served WPAD file points clients at: the first
+// --http-proxy-ports value, so --http-wpad alone needs no further flags.
+func wpadProxyPort() uint16 {
+	ports, err := flamingo.CrackPorts(params.HTTPProxyPorts)
+	if err != nil || len(ports) == 0 {
+		return 3128
+	}
+	return uint16(ports[0])
+}

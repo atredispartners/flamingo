@@ -206,6 +206,16 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupRDP(rw)
 	}
 
+	// HTTP proxy (407 capture)
+	if _, enabled := protocols["http-proxy"]; enabled {
+		setupHTTPProxy(rw)
+	}
+
+	// MQTT
+	if _, enabled := protocols["mqtt"]; enabled {
+		setupMQTT(rw)
+	}
+
 	// Kerberos
 	if _, enabled := protocols["kerberos"]; enabled {
 		setupKerberos(rw)
@@ -624,7 +634,7 @@ func setupHTTP(rw *flamingo.RecordWriter) {
 	// Create a listener for each port
 	httpPorts, err := flamingo.CrackPorts(params.HTTPPorts)
 	if err != nil {
-		log.Fatalf("failed to process ldap ports %s: %s", params.HTTPPorts, err)
+		log.Fatalf("failed to process http ports %s: %s", params.HTTPPorts, err)
 	}
 
 	for _, port := range httpPorts {
@@ -633,11 +643,14 @@ func setupHTTP(rw *flamingo.RecordWriter) {
 		httpConf.RecordWriter = rw
 		httpConf.BasicRealm = params.HTTPBasicRealm
 		httpConf.AuthMode = params.HTTPAuthMode
+		httpConf.ServeWPAD = params.ServeWPAD
+		httpConf.WPADProxy = params.WPADProxy
+		httpConf.WPADProxyPort = wpadProxyPort()
 		if err := flamingo.SpawnHTTP(httpConf); err != nil {
 			if params.DontIgnoreFailures {
-				log.Fatalf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
+				log.Fatalf("failed to start http server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
 			} else {
-				log.Errorf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
+				log.Errorf("failed to start http server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
 			}
 			continue
 		}
@@ -651,7 +664,7 @@ func setupHTTPS(rw *flamingo.RecordWriter) {
 	// Create a listener for each port
 	httpsPorts, err := flamingo.CrackPorts(params.HTTPSPorts)
 	if err != nil {
-		log.Fatalf("failed to process ldap ports %s: %s", params.HTTPSPorts, err)
+		log.Fatalf("failed to process https ports %s: %s", params.HTTPSPorts, err)
 	}
 
 	for _, port := range httpsPorts {
@@ -664,11 +677,14 @@ func setupHTTPS(rw *flamingo.RecordWriter) {
 		httpConf.TLSKey = params.TLSKeyData
 		httpConf.TLSName = params.TLSName
 		httpConf.AuthMode = params.HTTPAuthMode
+		httpConf.ServeWPAD = params.ServeWPAD
+		httpConf.WPADProxy = params.WPADProxy
+		httpConf.WPADProxyPort = wpadProxyPort()
 		if err := flamingo.SpawnHTTP(httpConf); err != nil {
 			if params.DontIgnoreFailures {
-				log.Fatalf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
+				log.Fatalf("failed to start https server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
 			} else {
-				log.Errorf("failed to start ldaps server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
+				log.Errorf("failed to start https server %s:%d: %q", httpConf.BindHost, httpConf.BindPort, err)
 			}
 			continue
 		}
