@@ -476,15 +476,18 @@ func (s *smtpSession) authCramMD5() error {
 }
 
 // authNTLM handles AUTH NTLM as described in MS-SMTPNTHT. The client's
-// NEGOTIATE arrives inline or after an empty 334, the fixed NTLMChallenge is
-// returned, and the AUTHENTICATE response is recorded in hashcat form.
+// NEGOTIATE arrives inline or after an empty 334, a CHALLENGE built from
+// NTLMConf is returned, and the AUTHENTICATE response is recorded in hashcat
+// form.
 func (s *smtpSession) authNTLM(initial string) error {
 	msg, err := s.initialOrContinuation(initial, "")
 	if err != nil {
 		return s.rejectAuth(err)
 	}
 	if NTLMMessageType(msg) == NTLMTypeNegotiate {
-		msg, err = s.continuation(NTLMChallenge)
+		clientFlags, _ := ParseNTLMNegotiate(msg)
+		challenge := base64.StdEncoding.EncodeToString(NTLMChallengeMessage(clientFlags))
+		msg, err = s.continuation(challenge)
 		if err != nil {
 			return s.rejectAuth(err)
 		}

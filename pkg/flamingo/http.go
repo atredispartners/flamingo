@@ -13,17 +13,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// NTLMChallenge is the fixed base64 CHALLENGE (type 2) blob the HTTP and
-// SMTP collectors send, as Responder does, using the 1122334455667788 server
-// challenge for easier offline cracking. It is frozen wire output: the server
-// challenge inside it must stay in step with NTLMConf.Challenge, which is what
-// NTLMHashcat writes into the captured lines. Listeners that build their own
-// CHALLENGE should call NTLMChallengeMessage instead.
-const NTLMChallenge = "TlRMTVNTUAACAAAABgAGADgAAAAFAomiESIzRFVmd4gAAAAAAAAAAIAAgAA+AAAABQL" +
-	"ODgAAAA9TAE0AQgACAAYARgBUAFAAAQAWAEYAVABQAC0AVABPAE8ATABCAE8AWAAEABIAZgB0AHAA" +
-	"LgBsAG8AYwBhAGwAAwAoAHMAZQByAHYAZQByADIAMAAxADYALgBmAHQAYgAuAGwAbwBjAGEAbAAFA" +
-	"BIAZgB0AHAALgBsAG8AYwBhAGwAAAAAAA=="
-
 // ConfHTTP describes the options for a HTTP service
 type ConfHTTP struct {
 	BindPort     uint16
@@ -235,7 +224,12 @@ func httpHandleNTLMAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok
 			w.Header().Set("WWW-Authenticate", "NTLM")
 			w.WriteHeader(401)
 		case 1:
-			w.Header().Set("WWW-Authenticate", fmt.Sprintf("NTLM %s", NTLMChallenge))
+			clientFlags := uint32(0)
+			if negotiate, err := ntlmHeaderBytes(authHeader); err == nil {
+				clientFlags, _ = ParseNTLMNegotiate(negotiate)
+			}
+			challenge := base64.StdEncoding.EncodeToString(NTLMChallengeMessage(clientFlags))
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf("NTLM %s", challenge))
 			w.WriteHeader(401)
 		case 3:
 			ntlmBytes, err := ntlmHeaderBytes(authHeader)
