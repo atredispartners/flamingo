@@ -512,4 +512,3 @@ func (s *smtpSession) authNTLM(initial string) error {
 	s.record("AUTH NTLM", fields)
 	return s.rejectAuth(nil)
 }
-
