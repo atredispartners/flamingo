@@ -200,3 +200,19 @@ func setupSMB(rw *flamingo.RecordWriter) {
 		return conf.Shutdown, flamingo.SpawnSMB(conf)
 	})
 }
+
+func setupMSSQLBrowser(rw *flamingo.RecordWriter) {
+	startListeners("mssql-browser", params.MSSQLBrowserPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfMSSQLBrowser()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Policy = poisonPolicy()
+		conf.AnswerBroadcast = poisonParams.AnswerBroadcast
+		// Point discovered clients at the MSSQL collector, so a host that
+		// finds us through the browser then authenticates to us.
+		if ports, err := flamingo.CrackPorts(params.MSSQLPorts); err == nil && len(ports) > 0 {
+			conf.TargetPort = uint16(ports[0])
+		}
+		return conf.Shutdown, flamingo.SpawnMSSQLBrowser(conf)
+	})
+}

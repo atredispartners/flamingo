@@ -48,6 +48,7 @@ type flamingoParameters struct {
 	SIPPorts           string
 	RDPPorts           string
 	SMBPorts           string
+	MSSQLBrowserPorts  string
 	TLSCertFile        string
 	TLSCertData        string
 	TLSKeyFile         string
@@ -84,7 +85,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
 	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "dont-ignore", "", false, "Treat individual listener failures as fatal")
 
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,redis,mongodb,amqp,socks,sip,rdp,smb,llmnr,nbtns,mdns", "Specify a comma-separated list of protocols")
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,mssql-browser,redis,mongodb,amqp,socks,sip,rdp,smb,llmnr,nbtns,mdns", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -132,6 +133,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.MySQLPorts, "mysql-ports", "", "3306", "The list of TCP ports to listen on for MySQL")
 	rootCmd.Flags().StringVarP(&params.PostgresPorts, "postgres-ports", "", "5432", "The list of TCP ports to listen on for PostgreSQL")
 	rootCmd.Flags().StringVarP(&params.MSSQLPorts, "mssql-ports", "", "1433", "The list of TCP ports to listen on for MSSQL")
+	rootCmd.Flags().StringVarP(&params.MSSQLBrowserPorts, "mssql-browser-ports", "", "1434", "The list of UDP ports to listen on for the SQL Server Browser")
 	rootCmd.Flags().StringVarP(&params.RedisPorts, "redis-ports", "", "6379", "The list of TCP ports to listen on for Redis")
 	rootCmd.Flags().StringVarP(&params.MongoDBPorts, "mongodb-ports", "", "27017", "The list of TCP ports to listen on for MongoDB")
 

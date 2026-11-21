@@ -206,6 +206,11 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupRDP(rw)
 	}
 
+	// SQL Server Browser
+	if _, enabled := protocols["mssql-browser"]; enabled {
+		setupMSSQLBrowser(rw)
+	}
+
 	// SMB
 	if _, enabled := protocols["smb"]; enabled {
 		setupSMB(rw)
