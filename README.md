@@ -2,7 +2,7 @@
 
 A filter-feeding bird. Captures credentials sprayed across the network by various IT and security products.
 
-Currently supports SSH, HTTP, LDAP, DNS, FTP, SNMP, VNC, IMAP, POP3, SMTP, Telnet, MySQL, PostgreSQL, MSSQL, Redis, MongoDB, AMQP, SOCKS, SIP, and RDP credential collection.
+Currently supports SSH, HTTP, LDAP, DNS, FTP, SNMP, VNC, IMAP, POP3, SMTP, Telnet, MySQL, PostgreSQL, MSSQL, Redis, MongoDB, AMQP, SOCKS, SIP, RDP, and SMB credential collection, plus LLMNR, NBT-NS, and mDNS name services.
 
 Pull requests are encouraged for additional protocols and output destinations.
 
@@ -30,10 +30,50 @@ Pull requests are encouraged for additional protocols and output destinations.
 | SOCKS | 1080/tcp | `--socks-ports` | SOCKS4/4a user IDs and SOCKS5 username/password |
 | SIP | 5060/udp | `--sip-ports` | Digest challenge/response (hashcat mode 11400) |
 | RDP | 3389/tcp | `--rdp-ports` | CredSSP NTLM challenge/response (hashcat mode 5600) and cleartext Client Info passwords from TLS-only clients |
+| SMB | 445/tcp, 139/tcp | `--smb-ports` | NTLMv2 (hashcat mode 5600) and NTLMv1 (hashcat mode 5500) from SMB1, SMB2 and SMB3 session setup |
+| LLMNR | 5355/udp | `--llmnr-ports`, `--poison-*` | Name queries; answers with this host's address |
+| NBT-NS | 137/udp | `--nbtns-ports`, `--poison-*` | Name queries; answers with this host's address |
+| mDNS | 5353/udp | `--mdns-ports`, `--poison-*` | Name queries; answers with this host's address |
 
-All protocols are enabled by default. The IMAP, POP3, and SMTP listeners advertise STARTTLS (STLS for POP3) and upgrade the session using the configured TLS certificate, so clients that refuse to authenticate in the clear still submit credentials. The MySQL and PostgreSQL listeners honor in-protocol TLS upgrade requests the same way, and the RDP listener terminates TLS for both NLA (CredSSP) and TLS-only clients.
+All protocols are enabled by default. The SMB listener negotiates dialects 2.0.2 through 3.1.1 and answers SMB1 clients with NT LM 0.12, so it collects NTLMv2 from modern Windows and LM/NTLMv1 from legacy clients. It never signs: a client that requires signing still completes session setup, which is where the credential is, and drops the session afterwards. The IMAP, POP3, and SMTP listeners advertise STARTTLS (STLS for POP3) and upgrade the session using the configured TLS certificate, so clients that refuse to authenticate in the clear still submit credentials. The MySQL and PostgreSQL listeners honor in-protocol TLS upgrade requests the same way, and the RDP listener terminates TLS for both NLA (CredSSP) and TLS-only clients.
 
 The HTTPS, LDAPS, IMAPS, POP3S, SMTPS, AMQPS, RDP, and STARTTLS-capable listeners use a self-signed certificate unless `--tls-cert` and `--tls-key` are provided. The VNC, NTLM, CRAM-MD5, MySQL, SIP, and MongoDB SCRAM listeners present a fixed challenge, salt, or nonce so captured responses can be cracked offline.
+
+## Name poisoning
+
+The LLMNR, NBT-NS, and mDNS listeners run by default and behave like every other
+flamingo listener: they observe and log name queries, and they answer queries sent
+directly to this host, pointing the querier at flamingo's own address so it
+authenticates to the collectors above.
+
+Answering queries that were *multicast or broadcast to the whole segment* is a
+different thing. That is poisoning: responding on behalf of names that were never
+addressed to this host, and redirecting traffic that was not meant for it. It is off
+unless you ask for it:
+
+```
+$ flamingo --poison-broadcast
+```
+
+Only use it on networks you are authorized to test. Queries are logged either way, so
+you can see what a poisoning run would have caught before enabling it; `--poison-analyze`
+goes further and answers nothing at all, not even directed queries.
+
+Scope controls apply to both modes, and are worth setting on any real engagement:
+
+| Option | Effect |
+|--------|--------|
+| `--poison-respond-to` | Only answer queriers at these addresses (IP, CIDR, or range) |
+| `--poison-dont-respond-to` | Never answer queriers at these addresses |
+| `--poison-respond-to-name` | Only answer these queried names |
+| `--poison-dont-respond-to-name` | Never answer these queried names (default `ISATAP`) |
+| `--poison-dont-respond-to-tld` | Never answer names with these suffixes (default `_dosvc`) |
+| `--poison-analyze` | Observe and log every query, answer nothing |
+| `--poison-spoof-ip`, `--poison-spoof-ip6` | Answer with this address instead of our own |
+| `--poison-ttl` | Override the answer TTL, which defenders fingerprint |
+
+By default the answer carries this host's own address on the interface the query arrived
+on, so no configuration is needed on a single-homed host.
 
 ## Usage
 
@@ -125,3 +165,16 @@ The following formats are supported:
  * Initial requirements by [Chris Bellows](https://github.com/chris-atredis)
  * NTLM support for HTTP by [Alex Flores](https://github.com/audibleblink)
  * VNC and IMAP support by [latentwhisper](https://github.com/latentwhisper)
+
+## Third-party software and licensing
+
+Flamingo is BSD 2-Clause licensed; see [LICENSE](LICENSE). Dependencies and their
+licenses are listed in [NOTICE](NOTICE).
+
+The SMB listener is built on the exported `x/wire` codecs from
+[go-smb2](https://github.com/hirochachacha/go-smb2) (BSD 3-Clause) by Hiroshi Ioka.
+
+The name-poisoning listeners cover much of what
+[Responder](https://github.com/lgandx/Responder) does, but share no code with it.
+Responder is GPL-3.0, which is incompatible with this project's license, so LLMNR,
+NBT-NS, and mDNS were implemented from their RFCs instead. See [NOTICE](NOTICE).

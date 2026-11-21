@@ -1,0 +1,41 @@
+flamingo
+Copyright (c) 2020, Atredis Partners LLC
+
+This product is licensed under the BSD 2-Clause License; see the LICENSE file.
+
+------------------------------------------------------------------------------
+Third-Party Components
+------------------------------------------------------------------------------
+
+This product depends on the following third-party software. Each is used under
+its own license, reproduced with its distribution.
+
+github.com/hirochachacha/go-smb2/v2
+  Copyright (c) 2016 Hiroshi Ioka. BSD 3-Clause License.
+  The SMB listener builds on this project's exported x/wire package for SMB2
+  and SMB3 message encoding and decoding.
+
+github.com/RackSec/srslog                     BSD 3-Clause
+github.com/gosnmp/gosnmp                      BSD 2-Clause
+github.com/miekg/dns                          BSD 3-Clause
+github.com/runZeroInc/excrypto                BSD 3-Clause
+github.com/sirupsen/logrus                    MIT
+github.com/spf13/cobra                        Apache-2.0
+golang.org/x/crypto, golang.org/x/net,
+golang.org/x/sys, golang.org/x/text           BSD 3-Clause
+
+------------------------------------------------------------------------------
+Protocol Implementations
+------------------------------------------------------------------------------
+
+The SMB, LLMNR, NBT-NS, mDNS, and NTLM code in this repository was written from
+Microsoft and IETF protocol specifications.
+
+The name-poisoning listeners provide functionality comparable to Responder
+(https://github.com/lgandx/Responder). No Responder source code is used or
+derived from here: Responder is distributed under the GPL-3.0, which is not
+compatible with this project's BSD 2-Clause license. These listeners were
+implemented independently from the published wire formats of LLMNR (RFC 4795),
+NBT-NS (RFC 1001/1002), and mDNS (RFC 6762). Where flag names or output
+conventions resemble Responder's, that is for operator familiarity and does not
+constitute use of its source.
