@@ -189,3 +189,32 @@ func TestClassifyDNSQuery(t *testing.T) {
 		}
 	}
 }
+
+// TestPoisonSpoofIPAlwaysResolves pins the rule that a poisoner answers with
+// its own address: with no override and no interface index, resolution must
+// still produce a routable local address rather than giving up.
+func TestPoisonSpoofIPAlwaysResolves(t *testing.T) {
+	querier := &net.UDPAddr{IP: net.ParseIP("8.8.8.8"), Port: 5355}
+	if ip := poisonSpoofIP("", false, 0, querier); ip == nil {
+		t.Error("no IPv4 spoof address resolved; a poisoner must answer with its own address")
+	} else if ip.IsLoopback() {
+		t.Errorf("resolved loopback %s as the spoof address", ip)
+	}
+}
+
+// TestPoisonSpoofIPOverride checks the explicit override wins, and that an
+// override of the wrong family is ignored rather than answered with.
+func TestPoisonSpoofIPOverride(t *testing.T) {
+	querier := &net.UDPAddr{IP: net.ParseIP("8.8.8.8"), Port: 5355}
+
+	got := poisonSpoofIP("10.1.2.3", false, 0, querier)
+	if got == nil || got.String() != "10.1.2.3" {
+		t.Errorf("override ignored: got %v, want 10.1.2.3", got)
+	}
+
+	// An IPv6 override must not be handed back for an A answer.
+	got = poisonSpoofIP("fe80::1", false, 0, querier)
+	if got != nil && got.String() == "fe80::1" {
+		t.Error("IPv6 override used for an IPv4 answer")
+	}
+}

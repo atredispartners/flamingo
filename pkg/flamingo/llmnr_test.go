@@ -114,8 +114,12 @@ func TestLLMNRAnswerNameOverride(t *testing.T) {
 	}
 }
 
-func TestLLMNRNoSpoofNoAnswer(t *testing.T) {
-	// With no override and an undeterminable interface, answer nothing.
+// TestLLMNRAnswersWithOwnIPByDefault pins the rule that a poisoner answers
+// with its own address. With no override configured and no usable interface
+// index from the platform, it must still answer — falling back to the local
+// address that reaches the querier — rather than staying silent. The whole
+// point is to make the querier connect to flamingo's collectors.
+func TestLLMNRAnswersWithOwnIPByDefault(t *testing.T) {
 	rw := NewRecordWriter()
 	got := make(chan map[string]string, 1)
 	rw.OutputWriters = append(rw.OutputWriters, func(rec map[string]string) error {
@@ -125,23 +129,31 @@ func TestLLMNRNoSpoofNoAnswer(t *testing.T) {
 
 	conf := NewConfLLMNR()
 	conf.RecordWriter = rw
-	// ifIndex 0 => no interface address; no SpoofIPv4 set.
+	// ifIndex 0 => the platform gave us no interface; no SpoofIPv4 set.
 	resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0)
-	if resp != nil {
-		t.Errorf("expected no answer when no spoof address available, got %s", hex.EncodeToString(resp))
+	if resp == nil {
+		t.Fatal("no answer sent; a poisoner must answer with its own address")
 	}
 
-	// But the query must still be recorded (observed) with answered=false.
 	select {
 	case rec := <-got:
-		if rec["answered"] != "false" {
-			t.Errorf("answered = %q, want false", rec["answered"])
+		if rec["answered"] != "true" {
+			t.Errorf("answered = %q, want true", rec["answered"])
 		}
-		if rec["reason"] == "" {
-			t.Errorf("expected a reason on an unanswered query")
+		spoofed := net.ParseIP(rec["spoofed"])
+		if spoofed == nil {
+			t.Fatalf("spoofed = %q, want a local address", rec["spoofed"])
+		}
+		if spoofed.IsLoopback() || spoofed.IsUnspecified() {
+			t.Errorf("spoofed = %s, want a routable local address", spoofed)
+		}
+		// The answer record must carry the same address we reported.
+		if !bytes.Contains(resp, spoofed.To4()) {
+			t.Errorf("answer %s does not carry the recorded address %s",
+				hex.EncodeToString(resp), spoofed)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("expected an observed-query record")
+		t.Fatal("expected a query record")
 	}
 }
 

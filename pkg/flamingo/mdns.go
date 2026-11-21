@@ -176,10 +176,10 @@ func (c *ConfMDNS) handle(data []byte, src net.Addr, ifIndex int) []byte {
 
 	var spoof net.IP
 	if respond {
-		spoof = c.chooseSpoof(wantV6, ifIndex)
+		spoof = c.chooseSpoof(wantV6, ifIndex, src)
 		if spoof == nil {
 			respond = false
-			reason = "no spoof address available"
+			reason = "host has no routable address to answer with"
 		}
 	}
 
@@ -190,20 +190,15 @@ func (c *ConfMDNS) handle(data []byte, src net.Addr, ifIndex int) []byte {
 	return buildMDNSAnswer(rawName, wantV6, spoof, c.TTL)
 }
 
-// chooseSpoof returns the address to answer with: the explicit override when
-// set, otherwise the address of the interface the query arrived on. When neither
-// is available it returns nil and the caller answers nothing.
-func (c *ConfMDNS) chooseSpoof(wantV6 bool, ifIndex int) net.IP {
+// chooseSpoof returns the address to answer with. A poisoner advertises its
+// own address so the querier connects to flamingo's collectors; see
+// poisonSpoofIP for the resolution order.
+func (c *ConfMDNS) chooseSpoof(wantV6 bool, ifIndex int, src net.Addr) net.IP {
+	override := c.SpoofIPv4
 	if wantV6 {
-		if c.SpoofIPv6 != "" {
-			return net.ParseIP(c.SpoofIPv6)
-		}
-		return ifaceIPv6(ifIndex)
+		override = c.SpoofIPv6
 	}
-	if c.SpoofIPv4 != "" {
-		return net.ParseIP(c.SpoofIPv4).To4()
-	}
-	return ifaceIPv4(ifIndex)
+	return poisonSpoofIP(override, wantV6, ifIndex, src)
 }
 
 func (c *ConfMDNS) record(src net.Addr, name, qtype string, answered bool, spoof net.IP, reason string) {

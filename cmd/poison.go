@@ -40,8 +40,8 @@ func init() {
 	// Advertised (spoofed) addresses. When unset, the address of the interface
 	// the query arrived on is used; if none can be determined, nothing is
 	// answered (the query is still observed and logged).
-	rootCmd.Flags().StringVarP(&poisonParams.SpoofIPv4, "poison-spoof-ip", "", "", "The IPv4 address to answer poisoned queries with (default: the arrival interface's address)")
-	rootCmd.Flags().StringVarP(&poisonParams.SpoofIPv6, "poison-spoof-ip6", "", "", "The IPv6 address to answer poisoned queries with (default: the arrival interface's address)")
+	rootCmd.Flags().StringVarP(&poisonParams.SpoofIPv4, "poison-spoof-ip", "", "", "The IPv4 address to answer poisoned queries with (default: this host's own address on the arrival interface)")
+	rootCmd.Flags().StringVarP(&poisonParams.SpoofIPv6, "poison-spoof-ip6", "", "", "The IPv6 address to answer poisoned queries with (default: this host's own address on the arrival interface)")
 	rootCmd.Flags().StringVarP(&poisonParams.AnswerName, "poison-answer-name", "", "", "Optional LLMNR answer-record name, overriding the queried name")
 	rootCmd.Flags().IntVarP(&poisonParams.TTL, "poison-ttl", "", -1, "Override the answer TTL (seconds) for all poisoners; -1 keeps per-protocol defaults")
 

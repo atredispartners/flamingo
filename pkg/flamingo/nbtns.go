@@ -176,10 +176,10 @@ func (c *ConfNBTNS) handle(data []byte, src net.Addr, ifIndex int) []byte {
 
 	var spoof net.IP
 	if respond {
-		spoof = c.chooseSpoof(ifIndex)
+		spoof = c.chooseSpoof(ifIndex, src)
 		if spoof == nil {
 			respond = false
-			reason = "no spoof address available"
+			reason = "host has no routable address to answer with"
 		}
 	}
 
@@ -190,14 +190,11 @@ func (c *ConfNBTNS) handle(data []byte, src net.Addr, ifIndex int) []byte {
 	return buildNBTNSAnswer(data, spoof, c.TTL)
 }
 
-// chooseSpoof returns the address to answer with: the explicit override when
-// set, otherwise the address of the interface the query arrived on. When neither
-// is available it returns nil and the caller answers nothing.
-func (c *ConfNBTNS) chooseSpoof(ifIndex int) net.IP {
-	if c.SpoofIPv4 != "" {
-		return net.ParseIP(c.SpoofIPv4).To4()
-	}
-	return ifaceIPv4(ifIndex)
+// chooseSpoof returns the address to answer with. A poisoner advertises its
+// own address so the querier connects to flamingo's collectors; see
+// poisonSpoofIP for the resolution order. NBT-NS is IPv4 only.
+func (c *ConfNBTNS) chooseSpoof(ifIndex int, src net.Addr) net.IP {
+	return poisonSpoofIP(c.SpoofIPv4, false, ifIndex, src)
 }
 
 func (c *ConfNBTNS) record(src net.Addr, name string, suffix byte, answered bool, spoof net.IP, reason string) {

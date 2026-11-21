@@ -500,6 +500,103 @@ func joinMulticastV6(pc *ipv6.PacketConn, group net.IP, proto string) int {
 
 // ifaceIPv4 returns the first routable IPv4 address of the interface with the
 // given index, or nil if none can be found.
+// poisonSpoofIP resolves the address a poisoner advertises for a queried name.
+// A poisoner answers with its own address: the point is to make the querier
+// connect to flamingo's collectors, so there is always an answer to give and
+// the resolution never gives up.
+//
+// override wins when set. Otherwise the address of the interface the query
+// arrived on is used, which is the right answer on a multi-homed host. When
+// the platform gave us no interface index, the local address the kernel would
+// pick to reach the querier is used instead — that is this host's address as
+// the querier sees it. The last resort is the first usable address on any
+// running interface.
+func poisonSpoofIP(override string, wantV6 bool, ifIndex int, querier net.Addr) net.IP {
+	if override != "" {
+		if ip := net.ParseIP(override); ip != nil {
+			if wantV6 {
+				if ip.To4() == nil {
+					return ip
+				}
+			} else if ip4 := ip.To4(); ip4 != nil {
+				return ip4
+			}
+		}
+	}
+
+	if wantV6 {
+		if ip := ifaceIPv6(ifIndex); ip != nil {
+			return ip
+		}
+	} else if ip := ifaceIPv4(ifIndex); ip != nil {
+		return ip
+	}
+
+	if ip := localIPToward(querier, wantV6); ip != nil {
+		return ip
+	}
+
+	return anyUsableIP(wantV6)
+}
+
+// localIPToward reports the local address the kernel would use to reach peer.
+// The UDP socket is unconnected on the wire — no packet is sent — so this is
+// just a routing-table lookup.
+func localIPToward(peer net.Addr, wantV6 bool) net.IP {
+	if peer == nil {
+		return nil
+	}
+	ip := srcIP(peer)
+	if ip == nil {
+		return nil
+	}
+	network := "udp4"
+	if wantV6 {
+		network = "udp6"
+	}
+	conn, err := net.Dial(network, net.JoinHostPort(ip.String(), "9"))
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+
+	local := addrIP(conn.LocalAddr())
+	if local == nil || local.IsLoopback() {
+		return nil
+	}
+	if wantV6 {
+		if local.To4() != nil {
+			return nil
+		}
+		return local
+	}
+	return local.To4()
+}
+
+// anyUsableIP returns the first routable address on any running, non-loopback
+// interface.
+func anyUsableIP(wantV6 bool) net.IP {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if wantV6 {
+			if ip := firstIPv6(&ifi); ip != nil {
+				return ip
+			}
+			continue
+		}
+		if ip := firstIPv4(&ifi); ip != nil {
+			return ip
+		}
+	}
+	return nil
+}
+
 func ifaceIPv4(ifIndex int) net.IP {
 	if ifIndex <= 0 {
 		return nil
