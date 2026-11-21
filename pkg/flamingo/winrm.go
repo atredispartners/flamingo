@@ -58,6 +58,9 @@ func (c *ConfWinRM) Shutdown() {
 
 // SpawnWinRM starts a logging WinRM server, normally on port 5985.
 func SpawnWinRM(c *ConfWinRM) error {
+	if !upstreamType3Safe {
+		return errUpstream32Bit("winrm")
+	}
 	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
 	capture := NewNTLMCapture("winrm", addr, c.RecordWriter)
 
@@ -129,6 +132,9 @@ func (c *ConfWinRMS) Shutdown() {
 
 // SpawnWinRMS starts a logging WinRM-over-TLS server, normally on port 5986.
 func SpawnWinRMS(c *ConfWinRMS) error {
+	if !upstreamType3Safe {
+		return errUpstream32Bit("winrms")
+	}
 	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
 	capture := NewNTLMCapture("winrms", addr, c.RecordWriter)
 

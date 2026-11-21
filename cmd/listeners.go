@@ -260,3 +260,45 @@ func wpadProxyPort() uint16 {
 	}
 	return uint16(ports[0])
 }
+
+func setupMSRPC(rw *flamingo.RecordWriter) {
+	startListeners("msrpc", params.MSRPCPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfMSRPC()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		return conf.Shutdown, flamingo.SpawnMSRPC(conf)
+	})
+}
+
+func setupWinRM(rw *flamingo.RecordWriter) {
+	startListeners("winrm", params.WinRMPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfWinRM()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		return conf.Shutdown, flamingo.SpawnWinRM(conf)
+	})
+}
+
+func setupWinRMS(rw *flamingo.RecordWriter) {
+	startListeners("winrms", params.WinRMSPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfWinRMS()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		// Upstream's HTTPS server loads a certificate from disk rather than
+		// from PEM data, so it can only use --tls-cert/--tls-key when they
+		// were given as paths. Otherwise it generates its own, and 5986
+		// presents a different certificate from flamingo's other TLS ports.
+		conf.TLSCertFile = params.TLSCertFile
+		conf.TLSKeyFile = params.TLSKeyFile
+		return conf.Shutdown, flamingo.SpawnWinRMS(conf)
+	})
+}
+
+func setupADWS(rw *flamingo.RecordWriter) {
+	startListeners("adws", params.ADWSPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfADWS()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		return conf.Shutdown, flamingo.SpawnADWS(conf)
+	})
+}

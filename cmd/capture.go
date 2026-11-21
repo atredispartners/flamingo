@@ -40,11 +40,24 @@ func startCapture(cmd *cobra.Command, args []string) {
 	log.SetFormatter(&log.JSONFormatter{TimestampFormat: time.RFC3339, FieldMap: fm})
 	log.SetOutput(os.Stdout)
 
-	// Redirect the standard logger to logrus output (for ldap and other libraries)
+	// Redirect the standard logger to logrus output (for ldap, gopacket's
+	// relay package and other libraries).
+	//
+	// These lines are diagnostics, not captured credentials: they never go to
+	// the configured outputs, only to stderr. They are emitted at debug level
+	// so --verbose shows them and an ordinary run does not. That matters
+	// beyond tidiness -- gopacket's relay package prints a line per connection
+	// and names the authenticating principal on each capture, which at info
+	// level would put victim identities on stderr even under --quiet, outside
+	// whatever destination the operator actually chose.
 	redirLog := log.New()
 	redirLog.SetFormatter(&log.JSONFormatter{TimestampFormat: time.RFC3339, FieldMap: fm})
-	stdlog.SetOutput(redirLog.Writer())
+	redirLog.SetLevel(log.DebugLevel)
+	stdlog.SetOutput(redirLog.WriterLevel(log.DebugLevel))
 	stdlog.SetFlags(0)
+	if !params.Verbose {
+		redirLog.SetLevel(log.InfoLevel)
+	}
 
 	// Set debug level if verbose is configured
 	if params.Verbose {
@@ -214,6 +227,18 @@ func startCapture(cmd *cobra.Command, args []string) {
 	// MQTT
 	if _, enabled := protocols["mqtt"]; enabled {
 		setupMQTT(rw)
+	}
+
+	// MSRPC, WinRM and ADWS
+	if _, enabled := protocols["msrpc"]; enabled {
+		setupMSRPC(rw)
+	}
+	if _, enabled := protocols["winrm"]; enabled {
+		setupWinRM(rw)
+		setupWinRMS(rw)
+	}
+	if _, enabled := protocols["adws"]; enabled {
+		setupADWS(rw)
 	}
 
 	// Kerberos

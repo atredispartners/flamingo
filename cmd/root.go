@@ -55,6 +55,10 @@ type flamingoParameters struct {
 	HTTPProxyPorts     string
 	ServeWPAD          bool
 	WPADProxy          string
+	MSRPCPorts         string
+	WinRMPorts         string
+	WinRMSPorts        string
+	ADWSPorts          string
 	TLSCertFile        string
 	TLSCertData        string
 	TLSKeyFile         string
@@ -91,7 +95,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
 	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "dont-ignore", "", false, "Treat individual listener failures as fatal")
 
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,http-proxy,mqtt,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,mssql-browser,redis,mongodb,amqp,socks,sip,rdp,smb,kerberos,llmnr,nbtns,mdns", "Specify a comma-separated list of protocols")
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,http-proxy,mqtt,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,mssql-browser,redis,mongodb,amqp,socks,sip,rdp,smb,kerberos,msrpc,winrm,adws,llmnr,nbtns,mdns", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -164,6 +168,12 @@ func init() {
 
 	// SMB parameters
 	rootCmd.Flags().StringVarP(&params.SMBPorts, "smb-ports", "", "445,139", "The list of TCP ports to listen on for SMB")
+
+	// Windows service parameters
+	rootCmd.Flags().StringVarP(&params.MSRPCPorts, "msrpc-ports", "", "135", "The list of TCP ports to listen on for MSRPC")
+	rootCmd.Flags().StringVarP(&params.WinRMPorts, "winrm-ports", "", "5985", "The list of TCP ports to listen on for WinRM")
+	rootCmd.Flags().StringVarP(&params.WinRMSPorts, "winrms-ports", "", "5986", "The list of TCP ports to listen on for WinRM over TLS")
+	rootCmd.Flags().StringVarP(&params.ADWSPorts, "adws-ports", "", "9389", "The list of TCP ports to listen on for Active Directory Web Services")
 
 	// Kerberos parameters
 	rootCmd.Flags().StringVarP(&params.KerberosPorts, "kerberos-ports", "", "88", "The list of TCP and UDP ports to listen on for Kerberos")
