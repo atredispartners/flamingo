@@ -23,6 +23,7 @@ const (
 	mssqlPktLogin    = 0x02 // TDS 4.2 and 5.0 login record
 	mssqlPktTabular  = 0x04
 	mssqlPktLogin7   = 0x10
+	mssqlPktSSPI     = 0x11 // SSPI security token message
 	mssqlPktPrelogin = 0x12
 )
 
@@ -42,13 +43,22 @@ const (
 // after the PRELOGIN exchange and yield no credential.
 const mssqlEncryptNotSup = 0x02
 
-// Message reassembly and session limits.
+// Message reassembly and session limits. A Windows Authentication login needs
+// four messages: PRELOGIN, LOGIN7 carrying the NTLMSSP NEGOTIATE, and the SSPI
+// message carrying the AUTHENTICATE, with one spare for a client that repeats
+// its PRELOGIN.
 const (
 	mssqlMaxMessage  = 32 * 1024
 	mssqlMaxPackets  = 16
-	mssqlMaxMessages = 3
+	mssqlMaxMessages = 4
 	mssqlTimeout     = 30 * time.Second
 )
+
+// mssqlMaxSSPI bounds the SSPI token taken from a LOGIN7 message. LOGIN7
+// declares the token length in cbSSPI, or in cbSSPILong when it is 0xffff and
+// the blob is larger than 64KB; either way the token has to fit inside a
+// reassembled message, so anything longer is refused rather than trusted.
+const mssqlMaxSSPI = mssqlMaxMessage
 
 // LOGIN7 fixed header lengths. TDS 7.0 and 7.1 end after ibAtchDBFile; 7.2
 // and later add ibChangePassword, cbChangePassword and cbSSPILong.
@@ -124,9 +134,19 @@ func (c *ConfMSSQL) record(conn net.Conn, fields map[string]string) {
 
 // mssqlHandleConnection answers PRELOGIN without encryption, records the
 // LOGIN7 credential and refuses the login with error 18456.
+//
+// A LOGIN7 carrying an NTLMSSP NEGOTIATE in its SSPI field is a Windows
+// Authentication login: the CHALLENGE goes back in a TDS SSPI message, the
+// client answers with another SSPI message carrying the AUTHENTICATE, and the
+// NetNTLM response in it is what gets recorded.
 func mssqlHandleConnection(c *ConfMSSQL, conn net.Conn) {
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(mssqlTimeout))
+
+	// The LOGIN7 whose SSPI exchange is in flight, and the client OS version
+	// its NEGOTIATE advertised.
+	var sspiLogin *mssqlLogin7
+	var sspiVersion string
 
 	for i := 0; i < mssqlMaxMessages; i++ {
 		typ, msg, err := mssqlReadMessage(conn)
@@ -149,8 +169,35 @@ func mssqlHandleConnection(c *ConfMSSQL, conn net.Conn) {
 				log.Debugf("mssql login7 from %s: %s", conn.RemoteAddr(), err)
 				return
 			}
+			if tok := FindNTLMSSP(login.SSPIToken); NTLMMessageType(tok) == NTLMTypeNegotiate {
+				flags, version := ParseNTLMNegotiate(tok)
+				if err := mssqlWrite(conn, mssqlPktSSPI, NTLMChallengeMessage(flags)); err != nil {
+					return
+				}
+				sspiLogin, sspiVersion = login, version
+				continue
+			}
 			c.record(conn, login.fields())
 			mssqlSendError(conn, 18456, fmt.Sprintf("Login failed for user '%s'.", login.Username))
+			return
+		case mssqlPktSSPI:
+			if sspiLogin == nil {
+				log.Debugf("mssql SSPI message without a LOGIN7 from %s", conn.RemoteAddr())
+				return
+			}
+			tok := FindNTLMSSP(msg)
+			if NTLMMessageType(tok) != NTLMTypeAuthenticate {
+				log.Debugf("mssql SSPI message type %d from %s, want AUTHENTICATE",
+					NTLMMessageType(tok), conn.RemoteAddr())
+				return
+			}
+			auth, err := ParseNTLMAuthenticate(tok)
+			if err != nil {
+				log.Debugf("mssql NTLM authenticate from %s: %s", conn.RemoteAddr(), err)
+				return
+			}
+			c.record(conn, sspiLogin.ntlmFields(auth, sspiVersion))
+			mssqlSendError(conn, 18456, fmt.Sprintf("Login failed for user '%s'.", mssqlNTLMUser(auth)))
 			return
 		case mssqlPktLogin:
 			fields, err := mssqlParseLegacyLogin(msg)
@@ -238,6 +285,9 @@ type mssqlLogin7 struct {
 	ChangePassword string
 	SSPI           bool
 	SSPILength     int
+	// SSPIToken is the security token carried in the LOGIN7 message, nil when
+	// the login carries none or declares one that does not fit the message.
+	SSPIToken []byte
 }
 
 // fields converts the decoded login into a credential record.
@@ -269,6 +319,41 @@ func (l *mssqlLogin7) fields() map[string]string {
 		rec["sspi_length"] = fmt.Sprintf("%d", l.SSPILength)
 	}
 	return rec
+}
+
+// ntlmFields merges the identity and challenge responses captured from an
+// NTLMSSP AUTHENTICATE message into the LOGIN7 record. negotiateVersion is the
+// client OS version from the NEGOTIATE, used when the AUTHENTICATE carries
+// none. The LOGIN7 client_version is the TDS client library version, so the
+// NTLM VERSION field is recorded separately as client_os_version.
+func (l *mssqlLogin7) ntlmFields(a *NTLMAuth, negotiateVersion string) map[string]string {
+	rec := l.fields()
+	rec["method"] = "NTLMSSP"
+	rec["username"] = a.User
+	rec["domain"] = a.Domain
+	rec["workstation"] = a.Workstation
+	rec["ntlm_version"] = a.NTLMVersion()
+	if line, mode := NTLMHashcat(a); line != "" {
+		rec["hashcat"] = line
+		rec["hashcat_mode"] = strconv.Itoa(mode)
+	}
+	version := a.Version
+	if version == "" {
+		version = negotiateVersion
+	}
+	if version != "" {
+		rec["client_os_version"] = version
+	}
+	return rec
+}
+
+// mssqlNTLMUser formats the authenticating identity for the login failure
+// message the way SQL Server names a Windows account.
+func mssqlNTLMUser(a *NTLMAuth) string {
+	if a.Domain != "" {
+		return a.Domain + "\\" + a.User
+	}
+	return a.User
 }
 
 // mssqlDecodeString extracts a UTF-16LE string referenced by an offset and
@@ -330,6 +415,7 @@ func mssqlParseLogin7(p []byte) (*mssqlLogin7, error) {
 	}
 	// OptionFlags2 fIntSecurity requests integrated authentication.
 	l.SSPI = p[25]&0x80 != 0 || l.SSPILength > 0
+	l.SSPIToken = mssqlSSPIToken(p, hdrLen, l.SSPILength)
 	if !l.SSPI {
 		l.Password = str(44, true)
 		if hdrLen == mssqlLoginHdrLen72 {
@@ -337,6 +423,21 @@ func mssqlParseLogin7(p []byte) (*mssqlLogin7, error) {
 		}
 	}
 	return l, nil
+}
+
+// mssqlSSPIToken returns the SSPI security token a LOGIN7 message points at.
+// ibSSPI sits after the 6-byte ClientID at offset 72, so the offset pair starts
+// at 78. A token that overlaps the fixed header, runs past the end of the
+// message, or is larger than a reassembled message can hold is refused.
+func mssqlSSPIToken(p []byte, hdrLen, length int) []byte {
+	if length <= 0 || length > mssqlMaxSSPI || len(p) < 80 {
+		return nil
+	}
+	off := int(binary.LittleEndian.Uint16(p[78:]))
+	if off < hdrLen || off+length > len(p) {
+		return nil
+	}
+	return p[off : off+length]
 }
 
 // mssqlSendError writes an ERROR token followed by DONE with the error flag set.

@@ -3,6 +3,7 @@ package flamingo
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -131,8 +132,8 @@ func mssqlTestLogin7(version uint32, f mssqlLogin7Fields) []byte {
 	put(60, f.lib, false)
 	put(64, f.lang, false)
 	put(68, f.db, false)
-	// SSPI token offset and length share the slot after the attach DB file.
-	le.PutUint16(hdr[76:], uint16(hdrLen+len(data)))
+	// ibSSPI and cbSSPI follow the 6-byte ClientID at offset 72.
+	le.PutUint16(hdr[78:], uint16(hdrLen+len(data)))
 	le.PutUint16(hdr[80:], uint16(len(f.sspi)))
 	if len(f.sspi) > 0 {
 		hdr[25] |= 0x80
@@ -315,6 +316,124 @@ func TestMSSQLLogin7Split(t *testing.T) {
 	}
 }
 
+// mssqlNTLMLogin is a Windows Authentication LOGIN7: no user name or password,
+// an NTLMSSP NEGOTIATE in the SSPI field.
+func mssqlNTLMLogin(token []byte) []byte {
+	return mssqlTestLogin7(0x74000004, mssqlLogin7Fields{
+		host:   "CORP-PC",
+		app:    "SSMS",
+		server: "sql01.corp.test",
+		lib:    "ODBC",
+		db:     "master",
+		sspi:   token,
+	})
+}
+
+// TestMSSQLNTLM drives a full Windows Authentication login: the LOGIN7 SSPI
+// field carries an NTLMSSP NEGOTIATE, the server answers with a CHALLENGE in a
+// TDS SSPI message, and the AUTHENTICATE that follows is recorded as a
+// crackable NetNTLMv2 line.
+func TestMSSQLNTLM(t *testing.T) {
+	addr, got, conf := mssqlTestServer(t)
+	defer conf.Shutdown()
+
+	conn := mssqlDial(t, addr)
+	defer conn.Close()
+	mssqlHandshake(t, conn)
+
+	if _, err := conn.Write(mssqlPacket(mssqlPktLogin7, 0x01, mssqlNTLMLogin(smbTestNegotiateToken()))); err != nil {
+		t.Fatalf("write login7: %s", err)
+	}
+
+	typ, challenge := mssqlReadResponse(t, conn)
+	if typ != mssqlPktSSPI {
+		t.Fatalf("response type 0x%02x, want 0x%02x (SSPI)", typ, mssqlPktSSPI)
+	}
+	if NTLMMessageType(challenge) != NTLMTypeChallenge {
+		t.Fatalf("SSPI message is not an NTLM CHALLENGE: % x", challenge)
+	}
+	if !bytes.Equal(challenge[24:32], NTLMConf.Challenge[:]) {
+		t.Errorf("challenge %x, want %x", challenge[24:32], NTLMConf.Challenge[:])
+	}
+
+	const user, domain, ws, password = "victim", "CORP", "WS01", "Summer2024!"
+	blob := ntlmTestV2Blob(smbTestTargetInfo(t, challenge), false)
+	proof := ntlmTestV2Proof(password, user, domain, NTLMConf.Challenge[:], blob)
+	nt := append(append([]byte(nil), proof...), blob...)
+	auth := ntlmTestAuthMsg(user, domain, ws, nil, nt, nil, 0)
+
+	if _, err := conn.Write(mssqlPacket(mssqlPktSSPI, 0x01, auth)); err != nil {
+		t.Fatalf("write sspi: %s", err)
+	}
+	typ, msg := mssqlReadResponse(t, conn)
+	mssqlCheckError(t, typ, msg, 18456, `Login failed for user 'CORP\victim'.`)
+
+	rec := mssqlWaitCred(t, got)
+	wantLine := fmt.Sprintf("%s::%s:%x:%x:%x", user, domain, NTLMConf.Challenge[:], proof, blob)
+	want := map[string]string{
+		"_proto":       "mssql",
+		"method":       "NTLMSSP",
+		"username":     user,
+		"domain":       domain,
+		"workstation":  ws,
+		"password":     "",
+		"ntlm_version": "v2",
+		"hashcat":      wantLine,
+		"hashcat_mode": "5600",
+		"hostname":     "CORP-PC",
+		"app_name":     "SSMS",
+		"server_name":  "sql01.corp.test",
+		"database":     "master",
+	}
+	for k, v := range want {
+		if rec[k] != v {
+			t.Errorf("record[%q] = %q, want %q", k, rec[k], v)
+		}
+	}
+	if rec["client_os_version"] != "10.0.19043" {
+		t.Errorf("client_os_version %q, want the version from the AUTHENTICATE", rec["client_os_version"])
+	}
+}
+
+// TestMSSQLNTLMv1 covers a client that answers with a 24-byte NTLMv1 response,
+// which is hashcat mode 5500 keyed on the workstation name.
+func TestMSSQLNTLMv1(t *testing.T) {
+	addr, got, conf := mssqlTestServer(t)
+	defer conf.Shutdown()
+
+	conn := mssqlDial(t, addr)
+	defer conn.Close()
+	mssqlHandshake(t, conn)
+
+	if _, err := conn.Write(mssqlPacket(mssqlPktLogin7, 0x01, mssqlNTLMLogin(smbTestNegotiateToken()))); err != nil {
+		t.Fatalf("write login7: %s", err)
+	}
+	if typ, _ := mssqlReadResponse(t, conn); typ != mssqlPktSSPI {
+		t.Fatalf("response type 0x%02x, want 0x%02x (SSPI)", typ, mssqlPktSSPI)
+	}
+
+	nt := ntlmTestV1Response("Password1", NTLMConf.Challenge[:])
+	lm := bytes.Repeat([]byte{0xcc}, 24)
+	auth := ntlmTestAuthMsg("legacy", "", "OLDBOX", lm, nt, nil, 0)
+	if _, err := conn.Write(mssqlPacket(mssqlPktSSPI, 0x01, auth)); err != nil {
+		t.Fatalf("write sspi: %s", err)
+	}
+	typ, msg := mssqlReadResponse(t, conn)
+	mssqlCheckError(t, typ, msg, 18456, "Login failed for user 'legacy'.")
+
+	rec := mssqlWaitCred(t, got)
+	wantLine := fmt.Sprintf("legacy::OLDBOX:%x:%x:%x", lm, nt, NTLMConf.Challenge[:])
+	if rec["hashcat"] != wantLine || rec["hashcat_mode"] != "5500" {
+		t.Errorf("hashcat %q/%q, want %q/5500", rec["hashcat"], rec["hashcat_mode"], wantLine)
+	}
+	if rec["ntlm_version"] != "v1" || rec["domain"] != "" {
+		t.Errorf("ntlm_version %q domain %q, want v1 and no domain", rec["ntlm_version"], rec["domain"])
+	}
+}
+
+// TestMSSQLSSPI checks that an SSPI token which is not NTLMSSP — a Kerberos
+// GSS-API blob here — is still recorded as an integrated-authentication
+// attempt and refused, with no challenge sent.
 func TestMSSQLSSPI(t *testing.T) {
 	addr, got, conf := mssqlTestServer(t)
 	defer conf.Shutdown()
@@ -323,16 +442,9 @@ func TestMSSQLSSPI(t *testing.T) {
 	defer conn.Close()
 	mssqlHandshake(t, conn)
 
-	// An NTLMSSP negotiate blob stands in for the SSPI token.
-	login := mssqlTestLogin7(0x74000004, mssqlLogin7Fields{
-		host:   "CORP-PC",
-		app:    "SSMS",
-		server: "sql01.corp.test",
-		lib:    "ODBC",
-		db:     "master",
-		sspi:   append([]byte("NTLMSSP\x00"), 1, 0, 0, 0, 0x97, 0x82, 0x08, 0xe2),
-	})
-	if _, err := conn.Write(mssqlPacket(mssqlPktLogin7, 0x01, login)); err != nil {
+	kerberos := append([]byte{0x60, 0x0e, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 0x02},
+		make([]byte, 3)...)
+	if _, err := conn.Write(mssqlPacket(mssqlPktLogin7, 0x01, mssqlNTLMLogin(kerberos))); err != nil {
 		t.Fatalf("write login7: %s", err)
 	}
 	typ, msg := mssqlReadResponse(t, conn)
@@ -350,6 +462,108 @@ func TestMSSQLSSPI(t *testing.T) {
 	}
 	if rec["hostname"] != "CORP-PC" || rec["app_name"] != "SSMS" || rec["server_name"] != "sql01.corp.test" {
 		t.Errorf("unexpected fields: %v", rec)
+	}
+	if _, ok := rec["hashcat"]; ok {
+		t.Errorf("non-NTLM SSPI token produced a hashcat line: %v", rec)
+	}
+}
+
+// TestMSSQLSSPIBounds checks the SSPI security buffer against offsets and
+// lengths that do not fit the message: a declared length longer than the
+// LOGIN7 itself, the 64KB cbSSPILong escape, and an offset pointing inside the
+// fixed header. None may yield a token, panic, or stall the parser.
+func TestMSSQLSSPIBounds(t *testing.T) {
+	le := binary.LittleEndian
+	cases := []struct {
+		name   string
+		mangle func(p []byte)
+	}{
+		{"length past the end of the message", func(p []byte) { le.PutUint16(p[80:], 0xfffe) }},
+		{"cbSSPILong escape", func(p []byte) {
+			le.PutUint16(p[80:], 0xffff)
+			le.PutUint32(p[90:], 1<<20)
+		}},
+		{"cbSSPILong just over the message cap", func(p []byte) {
+			le.PutUint16(p[80:], 0xffff)
+			le.PutUint32(p[90:], mssqlMaxSSPI+1)
+		}},
+		{"offset inside the fixed header", func(p []byte) { le.PutUint16(p[78:], 12) }},
+		{"offset past the end of the message", func(p []byte) { le.PutUint16(p[78:], 0xfff0) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			login := mssqlNTLMLogin(smbTestNegotiateToken())
+			tc.mangle(login)
+			l, err := mssqlParseLogin7(login)
+			if err != nil {
+				t.Fatalf("parse failed: %s", err)
+			}
+			if l.SSPIToken != nil {
+				t.Errorf("token %x extracted from an out-of-bounds SSPI buffer", l.SSPIToken)
+			}
+			if !l.SSPI {
+				t.Errorf("login should still be flagged as integrated authentication")
+			}
+		})
+	}
+}
+
+// TestMSSQLNTLMTruncated feeds the SSPI exchange tokens that are not a usable
+// AUTHENTICATE and checks nothing is recorded and nothing panics.
+func TestMSSQLNTLMTruncated(t *testing.T) {
+	addr, got, conf := mssqlTestServer(t)
+	defer conf.Shutdown()
+
+	cases := [][]byte{
+		nil,                   // empty SSPI message
+		[]byte("NTLMSSP\x00"), // signature only
+		append([]byte("NTLMSSP\x00"), 3, 0, 0, 0),                              // AUTHENTICATE header and nothing else
+		append(append([]byte("NTLMSSP\x00"), 3, 0, 0, 0), make([]byte, 60)...), // zeroed buffers
+		[]byte("not a security token at all"),
+	}
+	for i, tok := range cases {
+		conn := mssqlDial(t, addr)
+		mssqlHandshake(t, conn)
+		if _, err := conn.Write(mssqlPacket(mssqlPktLogin7, 0x01, mssqlNTLMLogin(smbTestNegotiateToken()))); err != nil {
+			t.Fatalf("case %d: write login7: %s", i, err)
+		}
+		if typ, _ := mssqlReadResponse(t, conn); typ != mssqlPktSSPI {
+			t.Fatalf("case %d: response type 0x%02x, want SSPI", i, typ)
+		}
+		conn.Write(mssqlPacket(mssqlPktSSPI, 0x01, tok))
+		conn.(*net.TCPConn).CloseWrite()
+		io.Copy(io.Discard, conn)
+		conn.Close()
+		select {
+		case rec := <-got:
+			// A zeroed AUTHENTICATE parses into an empty identity with no
+			// usable response; it must not produce a hashcat line.
+			if rec["hashcat"] != "" {
+				t.Errorf("case %d: unexpected credential %v", i, rec)
+			}
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// TestMSSQLSSPIWithoutLogin7 checks an SSPI message that arrives before any
+// LOGIN7 is dropped rather than answered.
+func TestMSSQLSSPIWithoutLogin7(t *testing.T) {
+	addr, got, conf := mssqlTestServer(t)
+	defer conf.Shutdown()
+
+	conn := mssqlDial(t, addr)
+	defer conn.Close()
+	mssqlHandshake(t, conn)
+	conn.Write(mssqlPacket(mssqlPktSSPI, 0x01, ntlmTestAuthMsg("a", "B", "C", nil, bytes.Repeat([]byte{1}, 48), nil, 0)))
+	conn.(*net.TCPConn).CloseWrite()
+	if b, _ := io.ReadAll(conn); len(b) != 0 {
+		t.Errorf("server answered an unsolicited SSPI message: % x", b)
+	}
+	select {
+	case rec := <-got:
+		t.Errorf("unexpected record %v", rec)
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
