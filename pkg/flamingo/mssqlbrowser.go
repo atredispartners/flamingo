@@ -60,6 +60,12 @@ type ConfMSSQLBrowser struct {
 	// be the port the MSSQL listener is bound to.
 	TargetPort uint16
 
+	// Policy scopes which broadcast discovery requests are answered, shared
+	// with the name poisoners so one set of --poison-* flags governs every
+	// broadcast answer flamingo gives. It is consulted only for broadcast
+	// requests; directed ones are answered like any other listener's traffic.
+	Policy *ScopePolicy
+
 	// AnswerBroadcast enables answering broadcast queries, the active half of
 	// instance discovery. Queries directed at this host are always answered.
 	// Discovery requests are usually broadcast to the whole segment, so this
@@ -82,6 +88,7 @@ func NewConfMSSQLBrowser() *ConfMSSQLBrowser {
 		InstanceName: defaultMSSQLBrowserInstance,
 		Version:      defaultMSSQLBrowserVersion,
 		TargetPort:   1433,
+		Policy:       DefaultScopePolicy(),
 	}
 }
 
@@ -250,8 +257,20 @@ func (c *ConfMSSQLBrowser) handle(data []byte, src net.Addr, ifIndex int, dst ne
 	}
 
 	respond, reason := true, ""
-	if !poisonIsDirected(dst) && !c.AnswerBroadcast {
-		respond, reason = false, poisonBroadcastReason
+
+	// Answering a broadcast discovery request advertises this host to a whole
+	// segment, so it is gated and scoped exactly as the name poisoners are: an
+	// operator who scopes a run with --poison-respond-to expects that to cover
+	// every broadcast answer flamingo gives, not just the LLMNR ones. A query
+	// directed at this host is answered like any other listener's traffic, so
+	// only the broadcast case consults the policy.
+	if !poisonIsDirected(dst) {
+		switch {
+		case !c.AnswerBroadcast:
+			respond, reason = false, poisonBroadcastReason
+		default:
+			respond, reason = c.Policy.ShouldRespond(srcIP(src), instance)
+		}
 	}
 
 	var resp []byte

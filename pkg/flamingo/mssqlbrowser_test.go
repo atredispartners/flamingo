@@ -270,3 +270,34 @@ func TestMSSQLBrowserDefaults(t *testing.T) {
 	}
 	conf.Shutdown() // must stay safe to call twice
 }
+
+// TestMSSQLBrowserBroadcastRespectsScope checks that the shared --poison-*
+// scope filters govern broadcast discovery answers too, so scoping a run to a
+// subnet covers every broadcast answer flamingo gives, not only the poisoners'.
+func TestMSSQLBrowserBroadcastRespectsScope(t *testing.T) {
+	broadcast := net.ParseIP("255.255.255.255")
+	inScope := &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 1434}
+	outOfScope := &net.UDPAddr{IP: net.ParseIP("192.168.5.5"), Port: 1434}
+
+	conf := NewConfMSSQLBrowser()
+	conf.RecordWriter = NewRecordWriter()
+	conf.AnswerBroadcast = true
+	policy, err := NewScopePolicy("10.0.0.0/24", "", "", "", "", false)
+	if err != nil {
+		t.Fatalf("scope policy: %s", err)
+	}
+	conf.Policy = policy
+
+	if resp := conf.handle([]byte{0x02}, inScope, 0, broadcast); resp == nil {
+		t.Error("in-scope broadcast query was not answered")
+	}
+	if resp := conf.handle([]byte{0x02}, outOfScope, 0, broadcast); resp != nil {
+		t.Error("out-of-scope broadcast query was answered")
+	}
+	// A directed query is this host's own traffic and is answered regardless.
+	if ip := anyUsableIP(false); ip != nil {
+		if resp := conf.handle([]byte{0x02}, outOfScope, 0, ip); resp == nil {
+			t.Error("directed query was refused by the broadcast scope policy")
+		}
+	}
+}
