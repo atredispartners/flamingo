@@ -10,12 +10,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/audibleblink/go-ntlm/ntlm"
 	log "github.com/sirupsen/logrus"
 )
 
-// NTLMChallenge is the challenge blob that Responder sends, using
-// 1122334455667788 for easier offline cracking
+// NTLMChallenge is the fixed base64 CHALLENGE (type 2) blob the HTTP and
+// SMTP collectors send, as Responder does, using the 1122334455667788 server
+// challenge for easier offline cracking. It is frozen wire output: the server
+// challenge inside it must stay in step with NTLMConf.Challenge, which is what
+// NTLMHashcat writes into the captured lines. Listeners that build their own
+// CHALLENGE should call NTLMChallengeMessage instead.
 const NTLMChallenge = "TlRMTVNTUAACAAAABgAGADgAAAAFAomiESIzRFVmd4gAAAAAAAAAAIAAgAA+AAAABQL" +
 	"ODgAAAA9TAE0AQgACAAYARgBUAFAAAQAWAEYAVABQAC0AVABPAE8ATABCAE8AWAAEABIAZgB0AHAA" +
 	"LgBsAG8AYwBhAGwAAwAoAHMAZQByAHYAZQByADIAMAAxADYALgBmAHQAYgAuAGwAbwBjAGEAbAAFA" +
@@ -240,12 +243,12 @@ func httpHandleNTLMAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok
 				w.WriteHeader(404)
 				return
 			}
-			hashType := ntlmGetHashType(authHeader)
-			netNTLMResponse, err := ntlm.ParseAuthenticateMessage(ntlmBytes, hashType)
+			auth, err := ParseNTLMAuthenticate(ntlmBytes)
 			if err != nil {
 				w.WriteHeader(404)
 				return
 			}
+			line, _ := NTLMHashcat(auth)
 
 			pname := "http"
 			if c.TLS {
@@ -260,8 +263,8 @@ func httpHandleNTLMAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok
 					"agent":    r.UserAgent(),
 					"path":     r.RequestURI,
 					"url":      fmt.Sprintf("%s://%s%s", pname, r.Host, r.RequestURI),
-					"username": netNTLMResponse.UserName.String(),
-					"hashcat":  ntlmToHashcat(netNTLMResponse, hashType),
+					"username": auth.User,
+					"hashcat":  line,
 					"method":   "NTLMSSP",
 				},
 			)
@@ -272,19 +275,6 @@ func httpHandleNTLMAuth(c *ConfHTTP, w http.ResponseWriter, r *http.Request) (ok
 		w.WriteHeader(404)
 	}
 	return
-}
-
-func ntlmGetHashType(header string) int {
-	netNTLMMessageBytes, err := ntlmHeaderBytes(header)
-	if err != nil {
-		return -1
-	}
-
-	hashSize := netNTLMMessageBytes[22]
-	if hashSize == 24 {
-		return 1
-	}
-	return 2
 }
 
 func ntlmType(header string) int {
@@ -302,29 +292,6 @@ func ntlmType(header string) int {
 	default:
 		return 3
 	}
-}
-
-func ntlmToHashcat(h *ntlm.AuthenticateMessage, ntlmVer int) (out string) {
-	template := "%s::%s:%s:%s:%s"
-	un := h.UserName.String()
-	dn := h.DomainName.String()
-	ws := h.Workstation.String()
-	ch := "1122334455667788"
-
-	if ntlmVer == 1 {
-		lm := h.LmChallengeResponse.String()
-		nt := h.NtlmV1Response.String()
-		out = fmt.Sprintf(template, un, ws, lm, nt, ch)
-	} else {
-		v2 := h.NtChallengeResponseFields.String()
-		if len(v2) < 64 {
-			v2 = "0000000000000000000000000000000000000000000000000000000000000000"
-		}
-		lm := v2[0:32]
-		nt := v2[32:]
-		out = fmt.Sprintf(template, un, dn, ch, lm, nt)
-	}
-	return
 }
 
 func ntlmHeaderBytes(header string) ([]byte, error) {

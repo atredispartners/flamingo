@@ -1,10 +1,39 @@
 package flamingo
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf16"
 )
+
+// utf16String decodes UTF-16LE, dropping trailing NULs and an odd trailing
+// byte.
+func utf16String(b []byte) string {
+	u := make([]uint16, len(b)/2)
+	for i := range u {
+		u[i] = binary.LittleEndian.Uint16(b[2*i:])
+	}
+	return strings.TrimRight(string(utf16.Decode(u)), "\x00")
+}
+
+// utf16Bytes encodes s as UTF-16LE.
+func utf16Bytes(s string) []byte {
+	u := utf16.Encode([]rune(s))
+	b := make([]byte, 2*len(u))
+	for i, c := range u {
+		binary.LittleEndian.PutUint16(b[2*i:], c)
+	}
+	return b
+}
+
+// winFiletime converts t to a Windows FILETIME: 100-nanosecond intervals
+// since 1601-01-01 UTC.
+func winFiletime(t time.Time) uint64 {
+	return uint64(t.UnixNano()/100) + 116444736000000000
+}
 
 // ValidPort determines if a port number is valid
 func ValidPort(pnum int) bool {

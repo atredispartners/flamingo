@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/audibleblink/go-ntlm/ntlm"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -485,61 +483,33 @@ func (s *smtpSession) authNTLM(initial string) error {
 	if err != nil {
 		return s.rejectAuth(err)
 	}
-	if smtpNTLMType(msg) == 1 {
+	if NTLMMessageType(msg) == NTLMTypeNegotiate {
 		msg, err = s.continuation(NTLMChallenge)
 		if err != nil {
 			return s.rejectAuth(err)
 		}
 	}
-	if smtpNTLMType(msg) != 3 {
+	if NTLMMessageType(msg) != NTLMTypeAuthenticate {
 		return s.rejectAuth(errSMTPAuthDecode)
 	}
 
-	hashType := smtpNTLMHashType(msg)
-	auth, err := smtpNTLMParse(msg, hashType)
+	auth, err := ParseNTLMAuthenticate(msg)
 	if err != nil {
 		return s.rejectAuth(errSMTPAuthDecode)
 	}
+	line, _ := NTLMHashcat(auth)
 
 	fields := map[string]string{
-		"username": auth.UserName.String(),
-		"hashcat":  ntlmToHashcat(auth, hashType),
+		"username": auth.User,
+		"hashcat":  line,
 	}
-	if domain := auth.DomainName.String(); domain != "" {
-		fields["domain"] = domain
+	if auth.Domain != "" {
+		fields["domain"] = auth.Domain
 	}
-	if ws := auth.Workstation.String(); ws != "" {
-		fields["workstation"] = ws
+	if auth.Workstation != "" {
+		fields["workstation"] = auth.Workstation
 	}
 	s.record("AUTH NTLM", fields)
 	return s.rejectAuth(nil)
 }
 
-// smtpNTLMType returns the NTLMSSP message type, or 0 when the bytes are not
-// an NTLMSSP message.
-func smtpNTLMType(b []byte) uint32 {
-	if len(b) < 12 || string(b[:8]) != "NTLMSSP\x00" {
-		return 0
-	}
-	return binary.LittleEndian.Uint32(b[8:12])
-}
-
-// smtpNTLMHashType reports 1 for an NTLMv1 AUTHENTICATE message, identified
-// by a 24 byte NT response, and 2 otherwise.
-func smtpNTLMHashType(b []byte) int {
-	if len(b) > 22 && binary.LittleEndian.Uint16(b[20:22]) == 24 {
-		return 1
-	}
-	return 2
-}
-
-// smtpNTLMParse decodes an AUTHENTICATE message, converting the panics the
-// parser raises on truncated input into an error.
-func smtpNTLMParse(b []byte, hashType int) (auth *ntlm.AuthenticateMessage, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			auth, err = nil, fmt.Errorf("malformed NTLM message: %v", r)
-		}
-	}()
-	return ntlm.ParseAuthenticateMessage(b, hashType)
-}
