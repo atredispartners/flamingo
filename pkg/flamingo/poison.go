@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/ipv4"
@@ -47,8 +49,10 @@ func openPoisonV4(host string, port uint16, group net.IP, proto string) (*ipv4.P
 		}
 		_ = v4.SetMulticastTTL(255)
 	}
-	// Not all platforms support this; the spoof-IP fallback covers failures.
-	_ = v4.SetControlMessage(ipv4.FlagInterface, true)
+	// Not all platforms support this; the spoof-IP fallback covers a missing
+	// interface index, and a missing destination address is treated as a
+	// broadcast query, which is the conservative direction.
+	_ = v4.SetControlMessage(ipv4.FlagInterface|ipv4.FlagDst, true)
 	return v4, nil
 }
 
@@ -66,13 +70,16 @@ func openPoisonV6(host string, port uint16, group net.IP, proto string) (*ipv6.P
 		}
 		_ = v6.SetMulticastHopLimit(255)
 	}
-	_ = v6.SetControlMessage(ipv6.FlagInterface, true)
+	_ = v6.SetControlMessage(ipv6.FlagInterface|ipv6.FlagDst, true)
 	return v6, nil
 }
 
 // poisonHandler processes one datagram and returns the reply bytes (nil to send
-// nothing). It is responsible for recording the observed query.
-type poisonHandler func(data []byte, src net.Addr, ifIndex int) []byte
+// nothing). It is responsible for recording the observed query. dst is the
+// address the datagram was sent to, which distinguishes a query directed at
+// this host from one shouted at a multicast group or broadcast address; it is
+// nil when the platform did not supply it.
+type poisonHandler func(data []byte, src net.Addr, ifIndex int, dst net.IP) []byte
 
 // poisonServeV4 reads datagrams from an IPv4 poisoner socket until shutdown,
 // dispatching each to handle and unicasting any reply back to the querier.
@@ -90,12 +97,14 @@ func poisonServeV4(c *ipv4.PacketConn, proto string, isShutdown func() bool, han
 			continue
 		}
 		ifIndex := 0
+		var dst net.IP
 		if cm != nil {
 			ifIndex = cm.IfIndex
+			dst = cm.Dst
 		}
 		data := make([]byte, n)
 		copy(data, buf[:n])
-		if resp := safePoisonHandle(proto, data, src, ifIndex, handle); resp != nil {
+		if resp := safePoisonHandle(proto, data, src, ifIndex, dst, handle); resp != nil {
 			if _, werr := c.WriteTo(resp, nil, src); werr != nil {
 				log.Debugf("%s: failed to reply to %s: %s", proto, src, werr)
 			}
@@ -118,12 +127,14 @@ func poisonServeV6(c *ipv6.PacketConn, proto string, isShutdown func() bool, han
 			continue
 		}
 		ifIndex := 0
+		var dst net.IP
 		if cm != nil {
 			ifIndex = cm.IfIndex
+			dst = cm.Dst
 		}
 		data := make([]byte, n)
 		copy(data, buf[:n])
-		if resp := safePoisonHandle(proto, data, src, ifIndex, handle); resp != nil {
+		if resp := safePoisonHandle(proto, data, src, ifIndex, dst, handle); resp != nil {
 			if _, werr := c.WriteTo(resp, nil, src); werr != nil {
 				log.Debugf("%s: failed to reply to %s: %s", proto, src, werr)
 			}
@@ -133,14 +144,14 @@ func poisonServeV6(c *ipv6.PacketConn, proto string, isShutdown func() bool, han
 
 // safePoisonHandle runs a handler, recovering from a malformed-packet panic the
 // way the other flamingo decoders do.
-func safePoisonHandle(proto string, data []byte, src net.Addr, ifIndex int, handle poisonHandler) (resp []byte) {
+func safePoisonHandle(proto string, data []byte, src net.Addr, ifIndex int, dst net.IP, handle poisonHandler) (resp []byte) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Debugf("%s decoder panic with data %x: %q", proto, data, r)
 			resp = nil
 		}
 	}()
-	return handle(data, src, ifIndex)
+	return handle(data, src, ifIndex, dst)
 }
 
 // be32 appends a big-endian uint32 to b.
@@ -500,6 +511,67 @@ func joinMulticastV6(pc *ipv6.PacketConn, group net.IP, proto string) int {
 
 // ifaceIPv4 returns the first routable IPv4 address of the interface with the
 // given index, or nil if none can be found.
+// poisonBroadcastReason is the reason recorded when a broadcast or multicast
+// query is observed but left unanswered because answering it was not enabled.
+const poisonBroadcastReason = "broadcast query, answering not enabled"
+
+// poisonIsDirected reports whether a datagram was addressed to this host
+// specifically, rather than shouted at a multicast group or a broadcast
+// address.
+//
+// This is the line between listening and poisoning. A host that sends a name
+// query straight to flamingo's address has come to us, exactly like a client
+// connecting to any other flamingo listener, and is answered by default.
+// Answering a query broadcast to the whole segment is an active step onto
+// someone else's network, so it stays opt-in.
+//
+// A nil dst means the platform did not tell us the destination; that is
+// treated as a broadcast query, because the failure should fall on the side of
+// staying quiet.
+func poisonIsDirected(dst net.IP) bool {
+	if dst == nil || dst.IsUnspecified() {
+		return false
+	}
+	if dst.IsMulticast() {
+		return false
+	}
+	// 255.255.255.255 and any subnet-directed broadcast fail the local-address
+	// test below, so they need no special case.
+	return isLocalUnicastIP(dst)
+}
+
+// localAddrCache memoizes this host's unicast addresses. Addresses are looked
+// up per datagram, so the syscall is cached briefly; the TTL keeps a poisoner
+// working across a DHCP lease change or an interface coming up.
+var localAddrCache struct {
+	m       sync.Mutex
+	addrs   map[string]bool
+	expires time.Time
+}
+
+const localAddrCacheTTL = 30 * time.Second
+
+// isLocalUnicastIP reports whether ip is an address configured on this host.
+func isLocalUnicastIP(ip net.IP) bool {
+	localAddrCache.m.Lock()
+	defer localAddrCache.m.Unlock()
+
+	if localAddrCache.addrs == nil || time.Now().After(localAddrCache.expires) {
+		addrs := make(map[string]bool)
+		if list, err := net.InterfaceAddrs(); err == nil {
+			for _, a := range list {
+				if local := addrIP(a); local != nil {
+					addrs[local.String()] = true
+				}
+			}
+		}
+		localAddrCache.addrs = addrs
+		localAddrCache.expires = time.Now().Add(localAddrCacheTTL)
+	}
+
+	return localAddrCache.addrs[ip.String()]
+}
+
 // poisonSpoofIP resolves the address a poisoner advertises for a queried name.
 // A poisoner answers with its own address: the point is to make the querier
 // connect to flamingo's collectors, so there is always an answer to give and

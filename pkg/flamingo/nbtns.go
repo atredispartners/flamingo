@@ -27,9 +27,13 @@ type ConfNBTNS struct {
 	BindHost     string
 	RecordWriter *RecordWriter
 
-	Policy    *ScopePolicy
-	SpoofIPv4 string
-	TTL       uint32
+	Policy *ScopePolicy
+	// AnswerBroadcast enables answering multicast and broadcast queries, the
+	// active half of poisoning. Queries directed at this host are always
+	// answered.
+	AnswerBroadcast bool
+	SpoofIPv4       string
+	TTL             uint32
 
 	shutdown bool
 	v4       *ipv4.PacketConn
@@ -166,13 +170,21 @@ func buildNBTNSAnswer(data []byte, ip net.IP, ttl uint32) []byte {
 }
 
 // handle processes one NBT-NS datagram, records it, and returns any reply bytes.
-func (c *ConfNBTNS) handle(data []byte, src net.Addr, ifIndex int) []byte {
+func (c *ConfNBTNS) handle(data []byte, src net.Addr, ifIndex int, dst net.IP) []byte {
 	name, suffix, ok := parseNBTNSQuery(data)
 	if !ok {
 		return nil
 	}
 
 	respond, reason := c.Policy.ShouldRespond(srcIP(src), name)
+
+	// Answering a query shouted at a multicast group or broadcast address is
+	// the active, opt-in half of poisoning; a query directed at this host is
+	// answered like any other flamingo listener would.
+	if respond && !poisonIsDirected(dst) && !c.AnswerBroadcast {
+		respond = false
+		reason = poisonBroadcastReason
+	}
 
 	var spoof net.IP
 	if respond {

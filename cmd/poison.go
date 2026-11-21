@@ -24,6 +24,7 @@ type poisonParameters struct {
 	DontRespondToName string
 	DontRespondToTLD  string
 	Analyze           bool
+	AnswerBroadcast   bool
 }
 
 var poisonParams = &poisonParameters{}
@@ -54,6 +55,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToName, "poison-dont-respond-to-name", "", flamingo.DefaultDontRespondToName, "Never answer queries for these names (comma list, case-insensitive)")
 	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToTLD, "poison-dont-respond-to-tld", "", flamingo.DefaultDontRespondToTLD, "Never answer queries whose name ends with these suffixes (comma list)")
 	rootCmd.Flags().BoolVarP(&poisonParams.Analyze, "poison-analyze", "", false, "Analyze mode: observe and log poisoner queries but answer nothing")
+	rootCmd.Flags().BoolVarP(&poisonParams.AnswerBroadcast, "poison-broadcast", "", false, "Answer multicast and broadcast name queries (LLMNR, NBT-NS, mDNS poisoning). Off by default: without it these listeners only answer queries sent directly to this host. Authorized engagements only")
 }
 
 // poisonPolicy builds the shared scope policy from the poisoner flags.
@@ -79,6 +81,7 @@ func setupLLMNR(rw *flamingo.RecordWriter) {
 		conf.BindPort = port
 		conf.RecordWriter = rw
 		conf.Policy = policy
+		conf.AnswerBroadcast = poisonParams.AnswerBroadcast
 		conf.SpoofIPv4 = poisonParams.SpoofIPv4
 		conf.SpoofIPv6 = poisonParams.SpoofIPv6
 		conf.AnswerName = poisonParams.AnswerName
@@ -96,6 +99,7 @@ func setupNBTNS(rw *flamingo.RecordWriter) {
 		conf.BindPort = port
 		conf.RecordWriter = rw
 		conf.Policy = policy
+		conf.AnswerBroadcast = poisonParams.AnswerBroadcast
 		conf.SpoofIPv4 = poisonParams.SpoofIPv4
 		if poisonParams.TTL >= 0 {
 			conf.TTL = uint32(poisonParams.TTL)
@@ -111,6 +115,7 @@ func setupMDNS(rw *flamingo.RecordWriter) {
 		conf.BindPort = port
 		conf.RecordWriter = rw
 		conf.Policy = policy
+		conf.AnswerBroadcast = poisonParams.AnswerBroadcast
 		conf.SpoofIPv4 = poisonParams.SpoofIPv4
 		conf.SpoofIPv6 = poisonParams.SpoofIPv6
 		if poisonParams.TTL >= 0 {

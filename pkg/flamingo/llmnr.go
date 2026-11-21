@@ -24,6 +24,10 @@ type ConfLLMNR struct {
 
 	// Policy scopes which queries are answered. A nil policy answers all.
 	Policy *ScopePolicy
+	// AnswerBroadcast enables answering multicast and broadcast queries, the
+	// active half of poisoning. Queries directed at this host are always
+	// answered.
+	AnswerBroadcast bool
 	// SpoofIPv4/SpoofIPv6 override the advertised address. When empty, the
 	// address of the interface the query arrived on is used.
 	SpoofIPv4 string
@@ -179,7 +183,7 @@ func buildLLMNRAnswer(tid, qname, aname []byte, wantV6 bool, ip net.IP, ttl uint
 }
 
 // handle processes one LLMNR datagram, records it, and returns any reply bytes.
-func (c *ConfLLMNR) handle(data []byte, src net.Addr, ifIndex int) []byte {
+func (c *ConfLLMNR) handle(data []byte, src net.Addr, ifIndex int, dst net.IP) []byte {
 	tid, name, qtype, wantV6, ok := parseLLMNRQuery(data)
 	if !ok {
 		return nil
@@ -187,6 +191,14 @@ func (c *ConfLLMNR) handle(data []byte, src net.Addr, ifIndex int) []byte {
 	qname := string(name)
 
 	respond, reason := c.Policy.ShouldRespond(srcIP(src), qname)
+
+	// Answering a query shouted at a multicast group or broadcast address is
+	// the active, opt-in half of poisoning; a query directed at this host is
+	// answered like any other flamingo listener would.
+	if respond && !poisonIsDirected(dst) && !c.AnswerBroadcast {
+		respond = false
+		reason = poisonBroadcastReason
+	}
 
 	var spoof net.IP
 	if respond {

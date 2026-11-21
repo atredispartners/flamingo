@@ -218,3 +218,42 @@ func TestPoisonSpoofIPOverride(t *testing.T) {
 		t.Error("IPv6 override used for an IPv4 answer")
 	}
 }
+
+// poisonTestDirectedDst returns one of this host's own addresses, standing in
+// for the destination of a query sent directly to flamingo rather than
+// broadcast to the segment.
+func poisonTestDirectedDst(t *testing.T) net.IP {
+	t.Helper()
+	ip := anyUsableIP(false)
+	if ip == nil {
+		t.Skip("no routable local IPv4 address on this host")
+	}
+	return ip
+}
+
+// TestPoisonIsDirected covers the line between listening and poisoning: a
+// query sent straight to this host is directed, anything shouted at a group or
+// broadcast address is not, and an unknown destination counts as broadcast so
+// the uncertain case stays quiet.
+func TestPoisonIsDirected(t *testing.T) {
+	if got := poisonIsDirected(nil); got {
+		t.Error("nil destination treated as directed; unknown must count as broadcast")
+	}
+	for _, s := range []string{"224.0.0.252", "224.0.0.251", "ff02::1:3", "ff02::fb"} {
+		if poisonIsDirected(net.ParseIP(s)) {
+			t.Errorf("multicast %s treated as directed", s)
+		}
+	}
+	if poisonIsDirected(net.ParseIP("255.255.255.255")) {
+		t.Error("limited broadcast treated as directed")
+	}
+	if poisonIsDirected(net.ParseIP("10.255.255.255")) {
+		t.Error("subnet broadcast treated as directed")
+	}
+	if poisonIsDirected(net.ParseIP("0.0.0.0")) {
+		t.Error("unspecified address treated as directed")
+	}
+	if ip := anyUsableIP(false); ip != nil && !poisonIsDirected(ip) {
+		t.Errorf("own address %s not treated as directed", ip)
+	}
+}

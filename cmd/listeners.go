@@ -191,3 +191,12 @@ func setupRDP(rw *flamingo.RecordWriter) {
 		return conf.Shutdown, flamingo.SpawnRDP(conf)
 	})
 }
+
+func setupSMB(rw *flamingo.RecordWriter) {
+	startListeners("smb", params.SMBPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfSMB()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		return conf.Shutdown, flamingo.SpawnSMB(conf)
+	})
+}

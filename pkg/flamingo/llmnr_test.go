@@ -104,7 +104,7 @@ func TestLLMNRAnswerNameOverride(t *testing.T) {
 	conf.SpoofIPv4 = "1.2.3.4"
 	conf.AnswerName = "evil"
 
-	resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0)
+	resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0, poisonTestDirectedDst(t))
 	// Question name "wpad" is echoed, answer record name is "evil".
 	if !bytes.Contains(resp, []byte{0x04, 'w', 'p', 'a', 'd'}) {
 		t.Errorf("question name wpad not echoed: %s", hex.EncodeToString(resp))
@@ -130,7 +130,7 @@ func TestLLMNRAnswersWithOwnIPByDefault(t *testing.T) {
 	conf := NewConfLLMNR()
 	conf.RecordWriter = rw
 	// ifIndex 0 => the platform gave us no interface; no SpoofIPv4 set.
-	resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0)
+	resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0, poisonTestDirectedDst(t))
 	if resp == nil {
 		t.Fatal("no answer sent; a poisoner must answer with its own address")
 	}
@@ -170,7 +170,7 @@ func TestLLMNRAnalyzeModeRecordsButDoesNotAnswer(t *testing.T) {
 	conf.SpoofIPv4 = "1.2.3.4" // even with a spoof address, analyze answers nothing
 	conf.Policy = mustPolicy(t, "", "", "", "", "", true)
 
-	if resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0); resp != nil {
+	if resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0, poisonTestDirectedDst(t)); resp != nil {
 		t.Errorf("analyze mode must not answer")
 	}
 	select {
@@ -220,5 +220,54 @@ func TestLLMNREndToEnd(t *testing.T) {
 	want := buildLLMNRAnswer([]byte{0x13, 0x37}, []byte("wpad"), []byte("wpad"), false, net.ParseIP("1.2.3.4"), defaultLLMNRTTL)
 	if !bytes.Equal(buf[:n], want) {
 		t.Errorf("end-to-end answer mismatch\n got %s\nwant %s", hex.EncodeToString(buf[:n]), hex.EncodeToString(want))
+	}
+}
+
+// TestLLMNRBroadcastGate pins the default split: a query multicast to the LLMNR
+// group is observed and logged but not answered, and the same query is answered
+// once broadcast answering is enabled.
+func TestLLMNRBroadcastGate(t *testing.T) {
+	group := net.ParseIP("224.0.0.252")
+	src := &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}
+
+	rw := NewRecordWriter()
+	got := make(chan map[string]string, 2)
+	rw.OutputWriters = append(rw.OutputWriters, func(rec map[string]string) error {
+		got <- rec
+		return nil
+	})
+
+	conf := NewConfLLMNR()
+	conf.RecordWriter = rw
+
+	if resp := conf.handle(llmnrQueryWPAD, src, 0, group); resp != nil {
+		t.Errorf("answered a multicast query by default: %s", hex.EncodeToString(resp))
+	}
+	select {
+	case rec := <-got:
+		if rec["answered"] != "false" {
+			t.Errorf("answered = %q, want false", rec["answered"])
+		}
+		if rec["reason"] != poisonBroadcastReason {
+			t.Errorf("reason = %q, want %q", rec["reason"], poisonBroadcastReason)
+		}
+		if rec["name"] == "" {
+			t.Error("the query must still be observed and logged")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected the multicast query to be recorded")
+	}
+
+	conf.AnswerBroadcast = true
+	if resp := conf.handle(llmnrQueryWPAD, src, 0, group); resp == nil {
+		t.Error("no answer to a multicast query with AnswerBroadcast set")
+	}
+	select {
+	case rec := <-got:
+		if rec["answered"] != "true" {
+			t.Errorf("answered = %q, want true", rec["answered"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a record for the answered query")
 	}
 }

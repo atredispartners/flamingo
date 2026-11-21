@@ -206,11 +206,16 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupRDP(rw)
 	}
 
-	// Name poisoning (LLMNR, NBT-NS, mDNS). Deliberately absent from the
-	// default --protocols list: every other listener waits to be connected to,
-	// while a poisoner answers name queries that were not addressed to
-	// flamingo at all. That is an active step on someone else's network, so it
-	// is opt-in and announced.
+	// SMB
+	if _, enabled := protocols["smb"]; enabled {
+		setupSMB(rw)
+	}
+
+	// Name poisoning (LLMNR, NBT-NS, mDNS). The listeners themselves run by
+	// default and answer name queries sent directly to this host, like any
+	// other flamingo listener. Answering queries multicast or broadcast to the
+	// whole segment is the active half -- that is what --poison-broadcast
+	// enables, and what gets announced below.
 	poisoners := []string{}
 	if _, enabled := protocols["llmnr"]; enabled {
 		setupLLMNR(rw)
@@ -224,13 +229,10 @@ func startCapture(cmd *cobra.Command, args []string) {
 		setupMDNS(rw)
 		poisoners = append(poisoners, "mdns")
 	}
-	if len(poisoners) > 0 && !params.Quiet {
-		mode := "answering queries"
-		if poisonParams.Analyze {
-			mode = "analyze mode, answering nothing"
-		}
-		fmt.Fprintf(os.Stderr, "name poisoning active (%s): %s\n",
-			strings.Join(poisoners, ", "), mode)
+	if len(poisoners) > 0 && poisonParams.AnswerBroadcast && !params.Quiet && !poisonParams.Analyze {
+		fmt.Fprintf(os.Stderr,
+			"name poisoning active (%s): answering broadcast and multicast queries\n",
+			strings.Join(poisoners, ", "))
 	}
 
 	// Make sure at least one capture is running

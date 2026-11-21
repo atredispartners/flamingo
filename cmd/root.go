@@ -47,6 +47,7 @@ type flamingoParameters struct {
 	SOCKSPorts         string
 	SIPPorts           string
 	RDPPorts           string
+	SMBPorts           string
 	TLSCertFile        string
 	TLSCertData        string
 	TLSKeyFile         string
@@ -83,7 +84,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
 	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "dont-ignore", "", false, "Treat individual listener failures as fatal")
 
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,redis,mongodb,amqp,socks,sip,rdp", "Specify a comma-separated list of protocols")
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,redis,mongodb,amqp,socks,sip,rdp,smb,llmnr,nbtns,mdns", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -146,6 +147,9 @@ func init() {
 
 	// RDP parameters
 	rootCmd.Flags().StringVarP(&params.RDPPorts, "rdp-ports", "", "3389", "The list of TCP ports to listen on for RDP")
+
+	// SMB parameters
+	rootCmd.Flags().StringVarP(&params.SMBPorts, "smb-ports", "", "445,139", "The list of TCP ports to listen on for SMB")
 
 	rootCmd.Flags().StringVarP(&params.TLSCertFile, "tls-cert", "", "", "An optional x509 certificate for TLS listeners")
 	rootCmd.Flags().StringVarP(&params.TLSKeyFile, "tls-key", "", "", "An optional x509 key for TLS listeners")
