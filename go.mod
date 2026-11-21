@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	github.com/RackSec/srslog v0.0.0-20180709174129-a4725f04ec91
 	github.com/gosnmp/gosnmp v1.47.0
+	github.com/hirochachacha/go-smb2/v2 v2.0.0-20261011164520-7f69f6587832
 	github.com/miekg/dns v1.1.73
 	github.com/runZeroInc/excrypto v0.43.3
 	github.com/sirupsen/logrus v1.10.2
