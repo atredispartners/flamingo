@@ -192,7 +192,12 @@ func (s *smbSession) smb1ExtendedSecurity(pkt []byte, ss *smb1SessionSetup) bool
 	switch NTLMMessageType(msg) {
 	case NTLMTypeNegotiate:
 		s.clientFlags, s.clientVersion = ParseNTLMNegotiate(msg)
-		blob := smbSPNEGONegTokenResp(NTLMChallengeMessage(s.clientFlags))
+		challenge, ok := s.challengeFor(msg)
+		if !ok {
+			return false
+		}
+		s.challenge = challenge
+		blob := smbSPNEGONegTokenResp(challenge)
 		w := make([]byte, 8)
 		w[0] = smb1AndXNone
 		binary.LittleEndian.PutUint16(w[6:8], uint16(len(blob)))
@@ -207,7 +212,11 @@ func (s *smbSession) smb1ExtendedSecurity(pkt []byte, ss *smb1SessionSetup) bool
 			return false
 		}
 		s.recordAuth(auth)
-		s.write(s.smb1Response(pkt, smbStatusLogonFailure, nil, nil))
+		status := uint32(smbStatusLogonFailure)
+		if s.authenticated(auth, msg) {
+			status = smbStatusSuccess
+		}
+		s.write(s.smb1Response(pkt, status, nil, nil))
 		return false
 	}
 

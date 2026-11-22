@@ -305,18 +305,42 @@ func ParseNTLMAuthenticate(msg []byte) (*NTLMAuth, error) {
 // (NetNTLMv1, user::workstation:LM:NT:challenge) for a v1 response. A message
 // without a usable NT response yields an empty line and a zero mode.
 func NTLMHashcat(a *NTLMAuth) (string, int) {
+	return NTLMHashcatChallenge(a, NTLMConf.Challenge[:])
+}
+
+// NTLMHashcatChallenge is NTLMHashcat against an explicit server challenge.
+//
+// The challenge is a parameter because it is not always flamingo's own. A
+// relayed exchange answers the victim with the *target's* challenge, so the
+// response the victim computes is only crackable against that challenge;
+// formatting it against NTLMConf.Challenge would emit a line that looks right
+// and can never crack. A nil or short challenge falls back to the configured
+// one, which is what every capture-only listener uses.
+func NTLMHashcatChallenge(a *NTLMAuth, challenge []byte) (string, int) {
 	if a == nil {
 		return "", 0
+	}
+	if len(challenge) != 8 {
+		challenge = NTLMConf.Challenge[:]
 	}
 	switch a.NTLMVersion() {
 	case "v1":
 		return fmt.Sprintf("%s::%s:%x:%x:%x", a.User, a.Workstation, a.LM, a.NT,
-			NTLMConf.Challenge[:]), NTLMHashcatModeNetNTLMv1
+			challenge), NTLMHashcatModeNetNTLMv1
 	case "v2":
-		return fmt.Sprintf("%s::%s:%x:%x:%x", a.User, a.Domain, NTLMConf.Challenge[:],
+		return fmt.Sprintf("%s::%s:%x:%x:%x", a.User, a.Domain, challenge,
 			a.NT[:16], a.NT[16:]), NTLMHashcatModeNetNTLMv2
 	}
 	return "", 0
+}
+
+// NTLMServerChallenge returns the 8-byte server challenge carried by a
+// CHALLENGE (type 2) message, or nil when msg is not one.
+func NTLMServerChallenge(msg []byte) []byte {
+	if len(msg) < 32 || NTLMMessageType(msg) != NTLMTypeChallenge {
+		return nil
+	}
+	return msg[24:32]
 }
 
 // NTLMAvPairs decodes an AV_PAIR list into a map of identifier to raw value,
