@@ -33,7 +33,7 @@ Pull requests are encouraged for additional protocols and output destinations.
 | SMB | 445/tcp, 139/tcp | `--smb-ports` | NTLMv2 (hashcat mode 5600) and NTLMv1 (hashcat mode 5500) from SMB1, SMB2 and SMB3 session setup |
 | Kerberos | 88/tcp, 88/udp | `--kerberos-ports`, `--kerberos-force-ntlm` | AS-REQ pre-authentication timestamps (hashcat modes 7500, 19800, 19900) |
 | MSRPC | 135/tcp | `--msrpc-ports` | NTLM from DCE/RPC bind authentication (hashcat mode 5600) |
-| WinRM | 5985/tcp, 5986/tcp | `--winrm-ports`, `--winrms-ports` | NTLM over WS-Management (hashcat mode 5600) |
+| WinRM | 5985/tcp, 5986/tcp | `--winrm-ports`, `--winrms-ports` | NTLM over WS-Management on `/wsman` (hashcat mode 5600) |
 | ADWS | 9389/tcp | `--adws-ports` | NTLM from Active Directory Web Services (hashcat mode 5600) |
 | SQL Browser | 1434/udp | `--mssql-browser-ports` | Instance discovery requests; answers point clients at the MSSQL listener |
 | HTTP proxy | 3128/tcp | `--http-proxy-ports`, `--http-wpad` | Proxy credentials via 407 (NTLM hashcat mode 5600, or Basic) |
@@ -46,11 +46,10 @@ All protocols are enabled by default. The SMB listener negotiates dialects 2.0.2
 
 The HTTPS, LDAPS, IMAPS, POP3S, SMTPS, AMQPS, RDP, and STARTTLS-capable listeners use a self-signed certificate unless `--tls-cert` and `--tls-key` are provided. The VNC, NTLM, CRAM-MD5, MySQL, SIP, SMB, Kerberos, and MongoDB SCRAM listeners present a fixed challenge, salt, or nonce so captured responses can be cracked offline. The NTLM challenge is `1122334455667788` on every listener that uses one.
 
-Two listeners are unavailable on 32-bit builds: **MSRPC and WinRM** are built on a
-third-party NTLM parser that can be crashed by a crafted message where `int` is 32 bits,
-which would terminate flamingo, so on `386` and `arm` they decline to start and say so.
-Every other listener, including SMB and ADWS, uses flamingo's own parsers and runs
-everywhere. Use a 64-bit build if you need MSRPC or WinRM.
+Every listener runs on every supported platform. Flamingo parses the protocols it
+listens for with its own code rather than handing attacker-controlled bytes to a
+library, which is what keeps the 32-bit `386` and `arm` builds usable: WinRM runs on
+flamingo's own HTTP collector, and SMB, ADWS and MSRPC are native implementations.
 
 ## Name poisoning
 
