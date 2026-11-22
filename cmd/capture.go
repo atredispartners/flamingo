@@ -111,6 +111,10 @@ func startCapture(cmd *cobra.Command, args []string) {
 	// Configure TLS certificates
 	setupTLS()
 
+	// Build the relay responder. Nil unless --relay-targets names somewhere,
+	// which leaves every listener capture-only.
+	relayResponder = setupRelay(rw)
+
 	// Setup protocol listeners
 
 	// SNMP

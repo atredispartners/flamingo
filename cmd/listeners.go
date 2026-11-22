@@ -5,6 +5,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// relayResponder is nil unless relaying is configured; when set, the
+// listeners that can relay hand it their victims' NTLM exchanges.
+var relayResponder flamingo.NTLMResponder
+
 // listenerSpawner starts one listener on the given port and returns its shutdown function.
 type listenerSpawner func(port uint16) (shutdown func(), err error)
 
@@ -197,6 +201,7 @@ func setupSMB(rw *flamingo.RecordWriter) {
 		conf := flamingo.NewConfSMB()
 		conf.BindPort = port
 		conf.RecordWriter = rw
+		conf.Responder = relayResponder
 		return conf.Shutdown, flamingo.SpawnSMB(conf)
 	})
 }
@@ -266,6 +271,7 @@ func setupMSRPC(rw *flamingo.RecordWriter) {
 		conf := flamingo.NewConfMSRPC()
 		conf.BindPort = port
 		conf.RecordWriter = rw
+		conf.Responder = relayResponder
 		return conf.Shutdown, flamingo.SpawnMSRPC(conf)
 	})
 }
@@ -275,6 +281,7 @@ func setupWinRM(rw *flamingo.RecordWriter) {
 		conf := flamingo.NewConfWinRM()
 		conf.BindPort = port
 		conf.RecordWriter = rw
+		conf.Responder = relayResponder
 		return conf.Shutdown, flamingo.SpawnWinRM(conf)
 	})
 }
@@ -284,6 +291,7 @@ func setupWinRMS(rw *flamingo.RecordWriter) {
 		conf := flamingo.NewConfWinRMS()
 		conf.BindPort = port
 		conf.RecordWriter = rw
+		conf.Responder = relayResponder
 		// Upstream's HTTPS server loads a certificate from disk rather than
 		// from PEM data, so it can only use --tls-cert/--tls-key when they
 		// were given as paths. Otherwise it generates its own, and 5986
@@ -299,6 +307,7 @@ func setupADWS(rw *flamingo.RecordWriter) {
 		conf := flamingo.NewConfADWS()
 		conf.BindPort = port
 		conf.RecordWriter = rw
+		conf.Responder = relayResponder
 		return conf.Shutdown, flamingo.SpawnADWS(conf)
 	})
 }
