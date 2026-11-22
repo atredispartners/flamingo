@@ -1,505 +1,282 @@
 package ldap
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
-	"time"
 )
 
-//
-func TestSearchSimpleOK(t *testing.T) {
-	quit := make(chan bool)
-	done := make(chan bool)
-	go func() {
-		s := NewServer()
-		s.QuitChannel(quit)
-		s.SearchFunc("", searchSimple{})
-		s.BindFunc("", bindSimple{})
-		if err := s.ListenAndServe(listenString); err != nil {
-			t.Errorf("s.ListenAndServe failed: %s", err.Error())
-		}
-	}()
+// testSearchClient starts a server with the given search handler and returns a
+// client already bound as the user bindSimple{} accepts.
+func testSearchClient(t *testing.T, enforceLDAP bool, searcher Searcher) *Conn {
+	t.Helper()
 
-	serverBaseDN := "o=testers,c=test"
+	s := NewServer()
+	s.EnforceLDAP = enforceLDAP
+	s.SearchFunc("", searcher)
+	s.BindFunc("", bindSimple{})
 
-	go func() {
-		cmd := exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test")
-		out, _ := cmd.CombinedOutput()
-		if !strings.Contains(string(out), "dn: cn=ned,o=testers,c=test") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "uidNumber: 5000") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numResponses: 4") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		done <- true
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Errorf("ldapsearch command timed out")
+	l := dialTest(t, testServer(t, s))
+	if err := l.Bind("cn=testy,"+serverBaseDN, "iLike2test"); err != nil {
+		t.Fatalf("bind failed: %s", err)
 	}
-	quit <- true
+	return l
+}
+
+// search runs one search and fails the test if the server refuses it.
+func search(t *testing.T, l *Conn, baseDN string, scope, sizeLimit int, filter string, attributes []string, controls []Control) *SearchResult {
+	t.Helper()
+
+	res, err := l.Search(NewSearchRequest(baseDN, scope, NeverDerefAliases, sizeLimit, 0, false, filter, attributes, controls))
+	if err != nil {
+		t.Fatalf("search %q under %q: %s", filter, baseDN, err)
+	}
+	return res
+}
+
+// hasDN reports whether a search result contains the given DN.
+func hasDN(res *SearchResult, dn string) bool {
+	for _, e := range res.Entries {
+		if e.DN == dn {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSearchSimpleOK(t *testing.T) {
+	l := testSearchClient(t, false, searchSimple{})
+
+	res := searchAll(t, l, serverBaseDN)
+	if len(res.Entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d: %v", len(res.Entries), entryDNs(res))
+	}
+	if !hasDN(res, "cn=ned,o=testers,c=test") {
+		t.Errorf("missing cn=ned: %v", entryDNs(res))
+	}
+	if got := res.Entries[0].GetAttributeValue("uidNumber"); got != "5000" {
+		t.Errorf("uidNumber of the first entry is %q, want 5000", got)
+	}
 }
 
 func TestSearchSizelimit(t *testing.T) {
-	quit := make(chan bool)
-	done := make(chan bool)
-	go func() {
-		s := NewServer()
-		s.EnforceLDAP = true
-		s.QuitChannel(quit)
-		s.SearchFunc("", searchSimple{})
-		s.BindFunc("", bindSimple{})
-		if err := s.ListenAndServe(listenString); err != nil {
-			t.Errorf("s.ListenAndServe failed: %s", err.Error())
-		}
-	}()
+	l := testSearchClient(t, true, searchSimple{})
 
-	go func() {
-		cmd := exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test") // no limit for this test
-		out, _ := cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numEntries: 3") {
-			t.Errorf("ldapsearch sizelimit unlimited failed - not enough entries: %v", string(out))
-		}
-
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", "-z", "9") // effectively no limit for this test
-		out, _ = cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numEntries: 3") {
-			t.Errorf("ldapsearch sizelimit 9 failed - not enough entries: %v", string(out))
-		}
-
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", "-z", "2")
-		out, _ = cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numEntries: 2") {
-			t.Errorf("ldapsearch sizelimit 2 failed - too many entries: %v", string(out))
-		}
-
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", "-z", "1")
-		out, _ = cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numEntries: 1") {
-			t.Errorf("ldapsearch sizelimit 1 failed - too many entries: %v", string(out))
-		}
-
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", "-z", "0")
-		out, _ = cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numEntries: 3") {
-			t.Errorf("ldapsearch sizelimit 0 failed - wrong number of entries: %v", string(out))
-		}
-
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", "-z", "1", "(uid=trent)")
-		out, _ = cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numEntries: 1") {
-			t.Errorf("ldapsearch sizelimit 1 with filter failed - wrong number of entries: %v", string(out))
-		}
-
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", "-z", "0", "(uid=trent)")
-		out, _ = cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numEntries: 1") {
-			t.Errorf("ldapsearch sizelimit 0 with filter failed - wrong number of entries: %v", string(out))
-		}
-		done <- true
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Errorf("ldapsearch command timed out")
+	// A size limit of 0 means unlimited, matching ldapsearch -z 0.
+	for _, tc := range []struct {
+		name        string
+		sizeLimit   int
+		filter      string
+		wantEntries int
+	}{
+		{name: "unlimited", sizeLimit: 0, filter: "(objectclass=*)", wantEntries: 3},
+		{name: "above the result count", sizeLimit: 9, filter: "(objectclass=*)", wantEntries: 3},
+		{name: "two", sizeLimit: 2, filter: "(objectclass=*)", wantEntries: 2},
+		{name: "one", sizeLimit: 1, filter: "(objectclass=*)", wantEntries: 1},
+		{name: "one with filter", sizeLimit: 1, filter: "(uid=trent)", wantEntries: 1},
+		{name: "unlimited with filter", sizeLimit: 0, filter: "(uid=trent)", wantEntries: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := search(t, l, serverBaseDN, ScopeWholeSubtree, tc.sizeLimit, tc.filter, nil, nil)
+			if len(res.Entries) != tc.wantEntries {
+				t.Errorf("size limit %d with filter %q returned %d entries, want %d: %v",
+					tc.sizeLimit, tc.filter, len(res.Entries), tc.wantEntries, entryDNs(res))
+			}
+		})
 	}
-	quit <- true
 }
 
-/////////////////////////
+// ///////////////////////
 func TestBindSearchMulti(t *testing.T) {
-	quit := make(chan bool)
-	done := make(chan bool)
-	go func() {
-		s := NewServer()
-		s.QuitChannel(quit)
-		s.BindFunc("", bindSimple{})
-		s.BindFunc("c=testz", bindSimple2{})
-		s.SearchFunc("", searchSimple{})
-		s.SearchFunc("c=testz", searchSimple2{})
-		if err := s.ListenAndServe(listenString); err != nil {
-			t.Errorf("s.ListenAndServe failed: %s", err.Error())
-		}
-	}()
+	s := NewServer()
+	s.BindFunc("", bindSimple{})
+	s.BindFunc("c=testz", bindSimple2{})
+	s.SearchFunc("", searchSimple{})
+	s.SearchFunc("c=testz", searchSimple2{})
+	addr := testServer(t, s)
 
-	go func() {
-		cmd := exec.Command("ldapsearch", "-H", ldapURL, "-x", "-b", "o=testers,c=test",
-			"-D", "cn=testy,o=testers,c=test", "-w", "iLike2test", "cn=ned")
-		out, _ := cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("error routing default bind/search functions: %v", string(out))
-		}
-		if !strings.Contains(string(out), "dn: cn=ned,o=testers,c=test") {
-			t.Errorf("search default routing failed: %v", string(out))
-		}
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x", "-b", "o=testers,c=testz",
-			"-D", "cn=testy,o=testers,c=testz", "-w", "ZLike2test", "cn=hamburger")
-		out, _ = cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("error routing custom bind/search functions: %v", string(out))
-		}
-		if !strings.Contains(string(out), "dn: cn=hamburger,o=testers,c=testz") {
-			t.Errorf("search custom routing failed: %v", string(out))
-		}
-		done <- true
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Errorf("ldapsearch command timed out")
+	// A bind is routed on the bind DN and a search on its base DN, so each
+	// half of the routing is exercised on its own connection.
+	def := dialTest(t, addr)
+	if err := def.Bind("cn=testy,o=testers,c=test", "iLike2test"); err != nil {
+		t.Fatalf("default bind routing failed: %s", err)
+	}
+	res := search(t, def, "o=testers,c=test", ScopeWholeSubtree, 0, "(cn=ned)", nil, nil)
+	if !hasDN(res, "cn=ned,o=testers,c=test") {
+		t.Errorf("default search routing failed: %v", entryDNs(res))
 	}
 
-	quit <- true
+	custom := dialTest(t, addr)
+	if err := custom.Bind("cn=testy,o=testers,c=testz", "ZLike2test"); err != nil {
+		t.Fatalf("custom bind routing failed: %s", err)
+	}
+	res = search(t, custom, "o=testers,c=testz", ScopeWholeSubtree, 0, "(cn=hamburger)", nil, nil)
+	if !hasDN(res, "cn=hamburger,o=testers,c=testz") {
+		t.Errorf("custom search routing failed: %v", entryDNs(res))
+	}
+
+	// The handler registered under c=testz must not answer for the default
+	// base DN, nor the other way round.
+	if res = search(t, def, "o=testers,c=test", ScopeWholeSubtree, 0, "(cn=hamburger)", nil, nil); hasDN(res, "cn=hamburger,o=testers,c=testz") {
+		t.Errorf("default search returned an entry from the c=testz handler: %v", entryDNs(res))
+	}
 }
 
-/////////////////////////
+// ///////////////////////
 func TestSearchPanic(t *testing.T) {
-	quit := make(chan bool)
-	done := make(chan bool)
-	go func() {
-		s := NewServer()
-		s.QuitChannel(quit)
-		s.SearchFunc("", searchPanic{})
-		s.BindFunc("", bindAnonOK{})
-		if err := s.ListenAndServe(listenString); err != nil {
-			t.Errorf("s.ListenAndServe failed: %s", err.Error())
-		}
-	}()
+	s := NewServer()
+	s.SearchFunc("", searchPanic{})
+	s.BindFunc("", bindAnonOK{})
 
-	go func() {
-		cmd := exec.Command("ldapsearch", "-H", ldapURL, "-x", "-b", "o=testers,c=test")
-		out, _ := cmd.CombinedOutput()
-		if !strings.Contains(string(out), "result: 1 Operations error") {
-			t.Errorf("ldapsearch should have returned operations error due to panic: %v", string(out))
-		}
-		done <- true
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Errorf("ldapsearch command timed out")
+	l := dialTest(t, testServer(t, s))
+	if err := l.Bind("", ""); err != nil {
+		t.Fatalf("bind failed: %s", err)
 	}
-	quit <- true
+
+	_, err := l.Search(NewSearchRequest(serverBaseDN, ScopeWholeSubtree, NeverDerefAliases, 0, 0, false, "(objectclass=*)", nil, nil))
+	if err == nil {
+		t.Fatal("search succeeded although the handler panicked")
+	}
+	if code := resultCode(t, err); code != LDAPResultOperationsError {
+		t.Errorf("expected operations error after handler panic, got %d", code)
+	}
 }
 
-/////////////////////////
+// ///////////////////////
 type compileSearchFilterTest struct {
-	name         string
-	filterStr    string
-	numResponses string
+	name       string
+	filterStr  string
+	numEntries int
 }
 
+// The entry counts here are one less than the numResponses the ldapsearch
+// version of this test asserted on, since that count included the search-done
+// message.
 var searchFilterTestFilters = []compileSearchFilterTest{
-	compileSearchFilterTest{name: "equalityOk", filterStr: "(uid=ned)", numResponses: "2"},
-	compileSearchFilterTest{name: "equalityNo", filterStr: "(uid=foo)", numResponses: "1"},
-	compileSearchFilterTest{name: "equalityOk", filterStr: "(objectclass=posixaccount)", numResponses: "4"},
-	compileSearchFilterTest{name: "presentEmptyOk", filterStr: "", numResponses: "4"},
-	compileSearchFilterTest{name: "presentOk", filterStr: "(objectclass=*)", numResponses: "4"},
-	compileSearchFilterTest{name: "presentOk", filterStr: "(description=*)", numResponses: "3"},
-	compileSearchFilterTest{name: "presentNo", filterStr: "(foo=*)", numResponses: "1"},
-	compileSearchFilterTest{name: "andOk", filterStr: "(&(uid=ned)(objectclass=posixaccount))", numResponses: "2"},
-	compileSearchFilterTest{name: "andNo", filterStr: "(&(uid=ned)(objectclass=posixgroup))", numResponses: "1"},
-	compileSearchFilterTest{name: "andNo", filterStr: "(&(uid=ned)(uid=trent))", numResponses: "1"},
-	compileSearchFilterTest{name: "orOk", filterStr: "(|(uid=ned)(uid=trent))", numResponses: "3"},
-	compileSearchFilterTest{name: "orOk", filterStr: "(|(uid=ned)(objectclass=posixaccount))", numResponses: "4"},
-	compileSearchFilterTest{name: "orNo", filterStr: "(|(uid=foo)(objectclass=foo))", numResponses: "1"},
-	compileSearchFilterTest{name: "andOrOk", filterStr: "(&(|(uid=ned)(uid=trent))(objectclass=posixaccount))", numResponses: "3"},
-	compileSearchFilterTest{name: "notOk", filterStr: "(!(uid=ned))", numResponses: "3"},
-	compileSearchFilterTest{name: "notOk", filterStr: "(!(uid=foo))", numResponses: "4"},
-	compileSearchFilterTest{name: "notAndOrOk", filterStr: "(&(|(uid=ned)(uid=trent))(!(objectclass=posixgroup)))", numResponses: "3"},
+	{name: "equalityOk", filterStr: "(uid=ned)", numEntries: 1},
+	{name: "equalityNo", filterStr: "(uid=foo)", numEntries: 0},
+	{name: "equalityObjectclassOk", filterStr: "(objectclass=posixaccount)", numEntries: 3},
+	// ldapsearch defaults to this filter when given an empty one, which is
+	// the case the "presentEmptyOk" row used to cover; the client here has
+	// no such default and rejects an empty filter.
+	{name: "presentDefaultOk", filterStr: "(objectclass=*)", numEntries: 3},
+	{name: "presentDescriptionOk", filterStr: "(description=*)", numEntries: 2},
+	{name: "presentNo", filterStr: "(foo=*)", numEntries: 0},
+	{name: "andOk", filterStr: "(&(uid=ned)(objectclass=posixaccount))", numEntries: 1},
+	{name: "andNoObjectclass", filterStr: "(&(uid=ned)(objectclass=posixgroup))", numEntries: 0},
+	{name: "andNoBothUids", filterStr: "(&(uid=ned)(uid=trent))", numEntries: 0},
+	{name: "orOk", filterStr: "(|(uid=ned)(uid=trent))", numEntries: 2},
+	{name: "orObjectclassOk", filterStr: "(|(uid=ned)(objectclass=posixaccount))", numEntries: 3},
+	{name: "orNo", filterStr: "(|(uid=foo)(objectclass=foo))", numEntries: 0},
+	{name: "andOrOk", filterStr: "(&(|(uid=ned)(uid=trent))(objectclass=posixaccount))", numEntries: 2},
+	{name: "notOk", filterStr: "(!(uid=ned))", numEntries: 2},
+	{name: "notNoMatch", filterStr: "(!(uid=foo))", numEntries: 3},
+	{name: "notAndOrOk", filterStr: "(&(|(uid=ned)(uid=trent))(!(objectclass=posixgroup)))", numEntries: 2},
+	{name: "substringInitialOk", filterStr: "(uid=ne*)", numEntries: 1},
+	{name: "substringFinalOk", filterStr: "(uid=*ent)", numEntries: 1},
+	{name: "substringAnyOk", filterStr: "(description=*via*)", numEntries: 2},
+	{name: "substringNo", filterStr: "(uid=zz*)", numEntries: 0},
 	/*
-		compileSearchFilterTest{filterStr: "(sn=Mill*)", filterType: FilterSubstrings},
-		compileSearchFilterTest{filterStr: "(sn=*Mill)", filterType: FilterSubstrings},
-		compileSearchFilterTest{filterStr: "(sn=*Mill*)", filterType: FilterSubstrings},
 		compileSearchFilterTest{filterStr: "(sn>=Miller)", filterType: FilterGreaterOrEqual},
 		compileSearchFilterTest{filterStr: "(sn<=Miller)", filterType: FilterLessOrEqual},
 		compileSearchFilterTest{filterStr: "(sn~=Miller)", filterType: FilterApproxMatch},
 	*/
 }
 
-/////////////////////////
+// ///////////////////////
 func TestSearchFiltering(t *testing.T) {
-	quit := make(chan bool)
-	done := make(chan bool)
-	go func() {
-		s := NewServer()
-		s.EnforceLDAP = true
-		s.QuitChannel(quit)
-		s.SearchFunc("", searchSimple{})
-		s.BindFunc("", bindSimple{})
-		if err := s.ListenAndServe(listenString); err != nil {
-			t.Errorf("s.ListenAndServe failed: %s", err.Error())
-		}
-	}()
+	l := testSearchClient(t, true, searchSimple{})
 
-	for _, i := range searchFilterTestFilters {
-		t.Log(i.name)
-
-		go func() {
-			cmd := exec.Command("ldapsearch", "-H", ldapURL, "-x",
-				"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", i.filterStr)
-			out, _ := cmd.CombinedOutput()
-			if !strings.Contains(string(out), "numResponses: "+i.numResponses) {
-				t.Errorf("ldapsearch failed - expected numResponses==%s: %v", i.numResponses, string(out))
+	for _, tc := range searchFilterTestFilters {
+		t.Run(tc.name, func(t *testing.T) {
+			res := search(t, l, serverBaseDN, ScopeWholeSubtree, 0, tc.filterStr, nil, nil)
+			if len(res.Entries) != tc.numEntries {
+				t.Errorf("filter %q returned %d entries, want %d: %v",
+					tc.filterStr, len(res.Entries), tc.numEntries, entryDNs(res))
 			}
-			done <- true
-		}()
-
-		select {
-		case <-done:
-		case <-time.After(timeout):
-			t.Errorf("ldapsearch command timed out")
-		}
+		})
 	}
-	quit <- true
 }
 
-/////////////////////////
+// ///////////////////////
 func TestSearchAttributes(t *testing.T) {
-	quit := make(chan bool)
-	done := make(chan bool)
-	go func() {
-		s := NewServer()
-		s.EnforceLDAP = true
-		s.QuitChannel(quit)
-		s.SearchFunc("", searchSimple{})
-		s.BindFunc("", bindSimple{})
-		if err := s.ListenAndServe(listenString); err != nil {
-			t.Errorf("s.ListenAndServe failed: %s", err.Error())
-		}
-	}()
+	l := testSearchClient(t, true, searchSimple{})
 
-	go func() {
-		filterString := ""
-		cmd := exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", filterString, "cn")
-		out, _ := cmd.CombinedOutput()
-
-		if !strings.Contains(string(out), "dn: cn=ned,o=testers,c=test") {
-			t.Errorf("ldapsearch failed - missing requested DN attribute: %v", string(out))
-		}
-		if !strings.Contains(string(out), "cn: ned") {
-			t.Errorf("ldapsearch failed - missing requested CN attribute: %v", string(out))
-		}
-		if strings.Contains(string(out), "uidNumber") {
-			t.Errorf("ldapsearch failed - uidNumber attr should not be displayed: %v", string(out))
-		}
-		if strings.Contains(string(out), "accountstatus") {
-			t.Errorf("ldapsearch failed - accountstatus attr should not be displayed: %v", string(out))
-		}
-		done <- true
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Errorf("ldapsearch command timed out")
+	res := search(t, l, serverBaseDN, ScopeWholeSubtree, 0, "(objectclass=*)", []string{"cn"}, nil)
+	if !hasDN(res, "cn=ned,o=testers,c=test") {
+		t.Fatalf("missing cn=ned: %v", entryDNs(res))
 	}
-	quit <- true
+	for _, e := range res.Entries {
+		names := []string{}
+		for _, a := range e.Attributes {
+			names = append(names, a.Name)
+		}
+		if len(names) != 1 || names[0] != "cn" {
+			t.Errorf("%s returned attributes %v, want cn only", e.DN, names)
+		}
+	}
+	if got := res.Entries[0].GetAttributeValue("cn"); got != "ned" {
+		t.Errorf("cn of the first entry is %q, want ned", got)
+	}
 }
 
 func TestSearchAllUserAttributes(t *testing.T) {
-	quit := make(chan bool)
-	done := make(chan bool)
-	go func() {
-		s := NewServer()
-		s.EnforceLDAP = true
-		s.QuitChannel(quit)
-		s.SearchFunc("", searchSimple{})
-		s.BindFunc("", bindSimple{})
-		if err := s.ListenAndServe(listenString); err != nil {
-			t.Errorf("s.ListenAndServe failed: %s", err.Error())
-		}
-	}()
+	l := testSearchClient(t, true, searchSimple{})
 
-	go func() {
-		filterString := ""
-		cmd := exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", filterString, "*")
-		out, _ := cmd.CombinedOutput()
-
-		if !strings.Contains(string(out), "dn: cn=ned,o=testers,c=test") {
-			t.Errorf("ldapsearch failed - missing requested DN attribute: %v", string(out))
-		}
-		if !strings.Contains(string(out), "cn: ned") {
-			t.Errorf("ldapsearch failed - missing requested CN attribute: %v", string(out))
-		}
-		if !strings.Contains(string(out), "uidNumber") {
-			t.Errorf("ldapsearch failed - missing requested uidNumber attribute: %v", string(out))
-		}
-		if !strings.Contains(string(out), "accountstatus") {
-			t.Errorf("ldapsearch failed - missing requested accountstatus attribute: %v", string(out))
-		}
-		if !strings.Contains(string(out), "o: ate") {
-			t.Errorf("ldapsearch failed - missing requested o attribute: %v", string(out))
-		}
-		if !strings.Contains(string(out), "description") {
-			t.Errorf("ldapsearch failed - missing requested description attribute: %v", string(out))
-		}
-		if !strings.Contains(string(out), "objectclass") {
-			t.Errorf("ldapsearch failed - missing requested objectclass attribute: %v", string(out))
-		}
-		done <- true
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Errorf("ldapsearch command timed out")
+	res := search(t, l, serverBaseDN, ScopeWholeSubtree, 0, "(objectclass=*)", []string{"*"}, nil)
+	if !hasDN(res, "cn=ned,o=testers,c=test") {
+		t.Fatalf("missing cn=ned: %v", entryDNs(res))
 	}
-	quit <- true
+	ned := res.Entries[0]
+	for _, want := range []struct{ attr, value string }{
+		{"cn", "ned"},
+		{"o", "ate"},
+		{"uidNumber", "5000"},
+		{"accountstatus", "active"},
+		{"description", "ned via sa"},
+		{"objectclass", "posixaccount"},
+	} {
+		if got := ned.GetAttributeValue(want.attr); got != want.value {
+			t.Errorf("%s is %q, want %q", want.attr, got, want.value)
+		}
+	}
 }
 
-/////////////////////////
+// ///////////////////////
 func TestSearchScope(t *testing.T) {
-	quit := make(chan bool)
-	done := make(chan bool)
-	go func() {
-		s := NewServer()
-		s.EnforceLDAP = true
-		s.QuitChannel(quit)
-		s.SearchFunc("", searchSimple{})
-		s.BindFunc("", bindSimple{})
-		if err := s.ListenAndServe(listenString); err != nil {
-			t.Errorf("s.ListenAndServe failed: %s", err.Error())
-		}
-	}()
+	l := testSearchClient(t, true, searchSimple{})
 
-	go func() {
-		cmd := exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", "c=test", "-D", "cn=testy,o=testers,c=test", "-w", "iLike2test", "-s", "sub", "cn=trent")
-		out, _ := cmd.CombinedOutput()
-		if !strings.Contains(string(out), "dn: cn=trent,o=testers,c=test") {
-			t.Errorf("ldapsearch 'sub' scope failed - didn't find expected DN: %v", string(out))
-		}
-
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", "o=testers,c=test", "-D", "cn=testy,o=testers,c=test", "-w", "iLike2test", "-s", "one", "cn=trent")
-		out, _ = cmd.CombinedOutput()
-		if !strings.Contains(string(out), "dn: cn=trent,o=testers,c=test") {
-			t.Errorf("ldapsearch 'one' scope failed - didn't find expected DN: %v", string(out))
-		}
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", "c=test", "-D", "cn=testy,o=testers,c=test", "-w", "iLike2test", "-s", "one", "cn=trent")
-		out, _ = cmd.CombinedOutput()
-		if strings.Contains(string(out), "dn: cn=trent,o=testers,c=test") {
-			t.Errorf("ldapsearch 'one' scope failed - found unexpected DN: %v", string(out))
-		}
-
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", "cn=trent,o=testers,c=test", "-D", "cn=testy,o=testers,c=test", "-w", "iLike2test", "-s", "base", "cn=trent")
-		out, _ = cmd.CombinedOutput()
-		if !strings.Contains(string(out), "dn: cn=trent,o=testers,c=test") {
-			t.Errorf("ldapsearch 'base' scope failed - didn't find expected DN: %v", string(out))
-		}
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", "o=testers,c=test", "-D", "cn=testy,o=testers,c=test", "-w", "iLike2test", "-s", "base", "cn=trent")
-		out, _ = cmd.CombinedOutput()
-		if strings.Contains(string(out), "dn: cn=trent,o=testers,c=test") {
-			t.Errorf("ldapsearch 'base' scope failed - found unexpected DN: %v", string(out))
-		}
-
-		done <- true
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Errorf("ldapsearch command timed out")
+	const trent = "cn=trent,o=testers,c=test"
+	for _, tc := range []struct {
+		name   string
+		baseDN string
+		scope  int
+		wantDN bool
+	}{
+		{name: "subFromRoot", baseDN: "c=test", scope: ScopeWholeSubtree, wantDN: true},
+		{name: "oneFromParent", baseDN: "o=testers,c=test", scope: ScopeSingleLevel, wantDN: true},
+		{name: "oneFromGrandparent", baseDN: "c=test", scope: ScopeSingleLevel, wantDN: false},
+		{name: "baseOnEntry", baseDN: trent, scope: ScopeBaseObject, wantDN: true},
+		{name: "baseOnParent", baseDN: "o=testers,c=test", scope: ScopeBaseObject, wantDN: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := search(t, l, tc.baseDN, tc.scope, 0, "(cn=trent)", nil, nil)
+			if got := hasDN(res, trent); got != tc.wantDN {
+				t.Errorf("scope %d under %q: found %s = %t, want %t", tc.scope, tc.baseDN, trent, got, tc.wantDN)
+			}
+		})
 	}
-	quit <- true
 }
 
 func TestSearchControls(t *testing.T) {
-	quit := make(chan bool)
-	done := make(chan bool)
-	go func() {
-		s := NewServer()
-		s.QuitChannel(quit)
-		s.SearchFunc("", searchControls{})
-		s.BindFunc("", bindSimple{})
-		if err := s.ListenAndServe(listenString); err != nil {
-			t.Errorf("s.ListenAndServe failed: %s", err.Error())
-		}
-	}()
+	l := testSearchClient(t, false, searchControls{})
 
-	serverBaseDN := "o=testers,c=test"
-
-	go func() {
-		cmd := exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test", "-e", "1.2.3.4.5")
-		out, _ := cmd.CombinedOutput()
-		if !strings.Contains(string(out), "dn: cn=hamburger,o=testers,c=testz") {
-			t.Errorf("ldapsearch with control failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch with control failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numResponses: 2") {
-			t.Errorf("ldapsearch with control failed: %v", string(out))
-		}
-
-		cmd = exec.Command("ldapsearch", "-H", ldapURL, "-x",
-			"-b", serverBaseDN, "-D", "cn=testy,"+serverBaseDN, "-w", "iLike2test")
-		out, _ = cmd.CombinedOutput()
-		if strings.Contains(string(out), "dn: cn=hamburger,o=testers,c=testz") {
-			t.Errorf("ldapsearch without control failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "result: 0 Success") {
-			t.Errorf("ldapsearch without control failed: %v", string(out))
-		}
-		if !strings.Contains(string(out), "numResponses: 1") {
-			t.Errorf("ldapsearch without control failed: %v", string(out))
-		}
-
-		done <- true
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Errorf("ldapsearch command timed out")
+	controls := []Control{NewControlString("1.2.3.4.5", false, "")}
+	res := search(t, l, serverBaseDN, ScopeWholeSubtree, 0, "(objectclass=*)", nil, controls)
+	if len(res.Entries) != 1 || !hasDN(res, "cn=hamburger,o=testers,c=testz") {
+		t.Errorf("search with control returned %v, want cn=hamburger only", entryDNs(res))
 	}
-	quit <- true
+
+	res = search(t, l, serverBaseDN, ScopeWholeSubtree, 0, "(objectclass=*)", nil, nil)
+	if len(res.Entries) != 0 {
+		t.Errorf("search without control returned %v, want no entries", entryDNs(res))
+	}
 }
