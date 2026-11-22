@@ -2,6 +2,7 @@ package flamingo
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/rand"
@@ -446,9 +447,7 @@ func TestSMTPAuthNTLM(t *testing.T) {
 	smtpExpect(t, r, "334")
 	fmt.Fprintf(conn, "%s\r\n", base64.StdEncoding.EncodeToString(smtpNTLMNegotiate()))
 	line := smtpExpect(t, r, "334 ")
-	if strings.TrimPrefix(line, "334 ") != NTLMChallenge {
-		t.Fatalf("type 2 challenge = %q, want NTLMChallenge", line)
-	}
+	smtpCheckChallenge(t, line)
 
 	proof := make([]byte, 16)
 	for i := range proof {
@@ -491,9 +490,28 @@ func TestSMTPAuthNTLMInline(t *testing.T) {
 	defer conn.Close()
 	fmt.Fprintf(conn, "AUTH NTLM %s\r\n", base64.StdEncoding.EncodeToString(smtpNTLMNegotiate()))
 	line := smtpExpect(t, r, "334 ")
-	if strings.TrimPrefix(line, "334 ") != NTLMChallenge {
-		t.Fatalf("type 2 challenge = %q, want NTLMChallenge", line)
-	}
+	smtpCheckChallenge(t, line)
 	fmt.Fprintf(conn, "*\r\n")
 	smtpExpect(t, r, "501 5.7.0")
+}
+
+// smtpCheckChallenge asserts that a 334 continuation carries a well-formed
+// NTLM CHALLENGE whose server challenge is the one NTLMHashcat will write into
+// captured lines. Asserting on the bytes rather than a frozen blob is what
+// keeps the sent challenge and the recorded challenge from drifting apart.
+func smtpCheckChallenge(t *testing.T, line string) {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(line, "334 "))
+	if err != nil {
+		t.Fatalf("type 2 challenge is not base64: %s", err)
+	}
+	if NTLMMessageType(raw) != NTLMTypeChallenge {
+		t.Fatalf("type 2 challenge has message type %d, want %d", NTLMMessageType(raw), NTLMTypeChallenge)
+	}
+	if len(raw) < 32 {
+		t.Fatalf("type 2 challenge is %d bytes, too short", len(raw))
+	}
+	if !bytes.Equal(raw[24:32], NTLMConf.Challenge[:]) {
+		t.Fatalf("server challenge = %x, want %x", raw[24:32], NTLMConf.Challenge)
+	}
 }

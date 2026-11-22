@@ -1,0 +1,316 @@
+package flamingo
+
+import (
+	"bytes"
+	"encoding/hex"
+	"net"
+	"testing"
+	"time"
+)
+
+// llmnrQueryWPAD is a real single-label LLMNR type-A query for "wpad",
+// transaction id 0x1337.
+var llmnrQueryWPAD = []byte{
+	0x13, 0x37, // transaction id
+	0x00, 0x00, // flags (standard query)
+	0x00, 0x01, // questions
+	0x00, 0x00, // answer RRs
+	0x00, 0x00, // authority RRs
+	0x00, 0x00, // additional RRs
+	0x04, 'w', 'p', 'a', 'd', 0x00, // QNAME
+	0x00, 0x01, // QTYPE A
+	0x00, 0x01, // QCLASS IN
+}
+
+func TestParseLLMNRQuery(t *testing.T) {
+	tid, name, qtype, wantV6, ok := parseLLMNRQuery(llmnrQueryWPAD)
+	if !ok {
+		t.Fatalf("expected query to parse")
+	}
+	if !bytes.Equal(tid, []byte{0x13, 0x37}) {
+		t.Errorf("tid = %x, want 1337", tid)
+	}
+	if string(name) != "wpad" {
+		t.Errorf("name = %q, want wpad", name)
+	}
+	if qtype != "A" || wantV6 {
+		t.Errorf("qtype = %q wantV6 = %v, want A false", qtype, wantV6)
+	}
+
+	// A query with non-zero flags (e.g. a response) must be rejected.
+	resp := append([]byte(nil), llmnrQueryWPAD...)
+	resp[2] = 0x80
+	if _, _, _, _, ok := parseLLMNRQuery(resp); ok {
+		t.Errorf("non-query flags should be rejected")
+	}
+}
+
+func TestBuildLLMNRAnswerA(t *testing.T) {
+	got := buildLLMNRAnswer([]byte{0x13, 0x37}, []byte("wpad"), []byte("wpad"), false, net.ParseIP("1.2.3.4"), defaultLLMNRTTL)
+
+	want := []byte{
+		0x13, 0x37, // transaction id
+		0x80, 0x00, // flags QR=1
+		0x00, 0x01, // questions
+		0x00, 0x01, // answer RRs
+		0x00, 0x00, // authority RRs
+		0x00, 0x00, // additional RRs
+		0x04, 'w', 'p', 'a', 'd', 0x00, // question name
+		0x00, 0x01, // QTYPE A
+		0x00, 0x01, // QCLASS IN
+		0x04, 'w', 'p', 'a', 'd', 0x00, // answer name
+		0x00, 0x01, // TYPE A
+		0x00, 0x01, // CLASS IN
+		0x00, 0x00, 0x00, 0x1e, // TTL 30
+		0x00, 0x04, // RDLENGTH
+		0x01, 0x02, 0x03, 0x04, // address
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("LLMNR A answer mismatch\n got %s\nwant %s", hex.EncodeToString(got), hex.EncodeToString(want))
+	}
+}
+
+func TestBuildLLMNRAnswerAAAA(t *testing.T) {
+	ip := net.ParseIP("fe80::1")
+	got := buildLLMNRAnswer([]byte{0x13, 0x37}, []byte("wpad"), []byte("wpad"), true, ip, defaultLLMNRTTL)
+
+	want := []byte{
+		0x13, 0x37,
+		0x80, 0x00,
+		0x00, 0x01,
+		0x00, 0x01,
+		0x00, 0x00,
+		0x00, 0x00,
+		0x04, 'w', 'p', 'a', 'd', 0x00,
+		0x00, 0x1c, // QTYPE AAAA
+		0x00, 0x01,
+		0x04, 'w', 'p', 'a', 'd', 0x00,
+		0x00, 0x1c, // TYPE AAAA
+		0x00, 0x01,
+		0x00, 0x00, 0x00, 0x1e,
+		0x00, 0x10, // RDLENGTH 16
+	}
+	want = append(want, ip.To16()...)
+	if !bytes.Equal(got, want) {
+		t.Errorf("LLMNR AAAA answer mismatch\n got %s\nwant %s", hex.EncodeToString(got), hex.EncodeToString(want))
+	}
+}
+
+func TestLLMNRAnswerNameOverride(t *testing.T) {
+	// handle() should echo the question name but answer with the override name.
+	rw := NewRecordWriter()
+	conf := NewConfLLMNR()
+	conf.RecordWriter = rw
+	conf.SpoofIPv4 = "1.2.3.4"
+	conf.AnswerName = "evil"
+
+	resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0, poisonTestDirectedDst(t))
+	// Question name "wpad" is echoed, answer record name is "evil".
+	if !bytes.Contains(resp, []byte{0x04, 'w', 'p', 'a', 'd'}) {
+		t.Errorf("question name wpad not echoed: %s", hex.EncodeToString(resp))
+	}
+	if !bytes.Contains(resp, []byte{0x04, 'e', 'v', 'i', 'l'}) {
+		t.Errorf("answer name override evil not present: %s", hex.EncodeToString(resp))
+	}
+}
+
+// TestLLMNRAnswersWithOwnIPByDefault pins the rule that a poisoner answers
+// with its own address. With no override configured and no usable interface
+// index from the platform, it must still answer — falling back to the local
+// address that reaches the querier — rather than staying silent. The whole
+// point is to make the querier connect to flamingo's collectors.
+func TestLLMNRAnswersWithOwnIPByDefault(t *testing.T) {
+	rw := NewRecordWriter()
+	got := make(chan map[string]string, 1)
+	rw.OutputWriters = append(rw.OutputWriters, func(rec map[string]string) error {
+		got <- rec
+		return nil
+	})
+
+	conf := NewConfLLMNR()
+	conf.RecordWriter = rw
+	// ifIndex 0 => the platform gave us no interface; no SpoofIPv4 set.
+	resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0, poisonTestDirectedDst(t))
+	if resp == nil {
+		t.Fatal("no answer sent; a poisoner must answer with its own address")
+	}
+
+	select {
+	case rec := <-got:
+		if rec["answered"] != "true" {
+			t.Errorf("answered = %q, want true", rec["answered"])
+		}
+		spoofed := net.ParseIP(rec["spoofed"])
+		if spoofed == nil {
+			t.Fatalf("spoofed = %q, want a local address", rec["spoofed"])
+		}
+		if spoofed.IsLoopback() || spoofed.IsUnspecified() {
+			t.Errorf("spoofed = %s, want a routable local address", spoofed)
+		}
+		// The answer record must carry the same address we reported.
+		if !bytes.Contains(resp, spoofed.To4()) {
+			t.Errorf("answer %s does not carry the recorded address %s",
+				hex.EncodeToString(resp), spoofed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a query record")
+	}
+}
+
+func TestLLMNRAnalyzeModeRecordsButDoesNotAnswer(t *testing.T) {
+	rw := NewRecordWriter()
+	got := make(chan map[string]string, 1)
+	rw.OutputWriters = append(rw.OutputWriters, func(rec map[string]string) error {
+		got <- rec
+		return nil
+	})
+
+	conf := NewConfLLMNR()
+	conf.RecordWriter = rw
+	conf.SpoofIPv4 = "1.2.3.4"  // even with a spoof address, analyze poisons nothing
+	conf.AnswerBroadcast = true // isolate analyze from the broadcast gate
+	conf.Policy = mustPolicy(t, "", "", "", "", "", true)
+
+	querier := &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}
+
+	// Analyze mode governs poisoning: claiming this name to the segment.
+	if resp := conf.handle(llmnrQueryWPAD, querier, 0, net.ParseIP("224.0.0.252")); resp != nil {
+		t.Errorf("analyze mode must not answer a query sent to the LLMNR group")
+	}
+	select {
+	case rec := <-got:
+		if rec["answered"] != "false" || rec["_proto"] != "llmnr" || rec["name"] != "wpad" {
+			t.Errorf("unexpected record: %v", rec)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected an observed-query record in analyze mode")
+	}
+
+	// A query addressed to this host is still answered. Replying to traffic
+	// aimed at this listener is not poisoning, so analyze mode does not stop
+	// it any more than it stops the SMB listener accepting a connection.
+	if resp := conf.handle(llmnrQueryWPAD, querier, 0, poisonTestDirectedDst(t)); resp == nil {
+		t.Errorf("analyze mode suppressed a directed query, which is not poisoning")
+	}
+}
+
+// TestLLMNREndToEnd drives the live socket with a real query and verifies the
+// unicast answer comes straight back to the querier's source address.
+func TestLLMNREndToEnd(t *testing.T) {
+	rw := NewRecordWriter()
+	conf := NewConfLLMNR()
+	conf.BindHost = "127.0.0.1"
+	conf.BindPort = 0 // OS picks a free port
+	conf.RecordWriter = rw
+	conf.SpoofIPv4 = "1.2.3.4"
+
+	if err := SpawnLLMNR(conf); err != nil {
+		t.Fatalf("SpawnLLMNR failed: %s", err)
+	}
+	defer conf.Shutdown()
+
+	srvAddr := conf.v4.LocalAddr().(*net.UDPAddr)
+
+	client, err := net.DialUDP("udp4", nil, srvAddr)
+	if err != nil {
+		t.Fatalf("dial failed: %s", err)
+	}
+	defer client.Close()
+	client.SetDeadline(time.Now().Add(5 * time.Second))
+
+	if _, err := client.Write(llmnrQueryWPAD); err != nil {
+		t.Fatalf("write failed: %s", err)
+	}
+
+	buf := make([]byte, 4096)
+	n, err := client.Read(buf)
+	if err != nil {
+		t.Fatalf("read failed: %s", err)
+	}
+
+	want := buildLLMNRAnswer([]byte{0x13, 0x37}, []byte("wpad"), []byte("wpad"), false, net.ParseIP("1.2.3.4"), defaultLLMNRTTL)
+	if !bytes.Equal(buf[:n], want) {
+		t.Errorf("end-to-end answer mismatch\n got %s\nwant %s", hex.EncodeToString(buf[:n]), hex.EncodeToString(want))
+	}
+}
+
+// TestLLMNRBroadcastGate pins the default split: a query multicast to the LLMNR
+// group is observed and logged but not answered, and the same query is answered
+// once broadcast answering is enabled.
+func TestLLMNRBroadcastGate(t *testing.T) {
+	group := net.ParseIP("224.0.0.252")
+	src := &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}
+
+	rw := NewRecordWriter()
+	got := make(chan map[string]string, 2)
+	rw.OutputWriters = append(rw.OutputWriters, func(rec map[string]string) error {
+		got <- rec
+		return nil
+	})
+
+	conf := NewConfLLMNR()
+	conf.RecordWriter = rw
+
+	if resp := conf.handle(llmnrQueryWPAD, src, 0, group); resp != nil {
+		t.Errorf("answered a multicast query by default: %s", hex.EncodeToString(resp))
+	}
+	select {
+	case rec := <-got:
+		if rec["answered"] != "false" {
+			t.Errorf("answered = %q, want false", rec["answered"])
+		}
+		if rec["reason"] != poisonBroadcastReason {
+			t.Errorf("reason = %q, want %q", rec["reason"], poisonBroadcastReason)
+		}
+		if rec["name"] == "" {
+			t.Error("the query must still be observed and logged")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected the multicast query to be recorded")
+	}
+
+	conf.AnswerBroadcast = true
+	if resp := conf.handle(llmnrQueryWPAD, src, 0, group); resp == nil {
+		t.Error("no answer to a multicast query with AnswerBroadcast set")
+	}
+	select {
+	case rec := <-got:
+		if rec["answered"] != "true" {
+			t.Errorf("answered = %q, want true", rec["answered"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a record for the answered query")
+	}
+}
+
+// TestParseLLMNRQueryDeclinesMultiLabel checks that a multi-label QNAME is
+// declined rather than answered. buildLLMNRAnswer echoes the question as a
+// single length-prefixed label, so answering one would send back a question
+// the querier cannot match and silently drops -- a poisoning attempt that
+// looks successful in the log and never lands.
+func TestParseLLMNRQueryDeclinesMultiLabel(t *testing.T) {
+	multi := []byte{
+		0x13, 0x37, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		4, 'h', 'o', 's', 't', 5, 'l', 'o', 'c', 'a', 'l', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+	}
+	if _, _, _, _, ok := parseLLMNRQuery(multi); ok {
+		t.Error("a multi-label LLMNR query was accepted; the reply could not have matched")
+	}
+
+	single := []byte{
+		0x13, 0x37, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		4, 'w', 'p', 'a', 'd', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+	}
+	tid, name, qtype, wantV6, ok := parseLLMNRQuery(single)
+	if !ok {
+		t.Fatal("a single-label LLMNR query was rejected")
+	}
+	if string(name) != "wpad" || qtype != "A" || wantV6 {
+		t.Errorf("name = %q qtype = %q wantV6 = %v, want wpad A false", name, qtype, wantV6)
+	}
+	if len(tid) != 2 || tid[0] != 0x13 || tid[1] != 0x37 {
+		t.Errorf("tid = % x, want 13 37", tid)
+	}
+}

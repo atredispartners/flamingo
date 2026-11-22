@@ -332,7 +332,14 @@ func decodePacket(data []byte) (*Packet, []byte, error) {
 	p.TagType = data[0] & TypeBitmask
 	p.Tag = data[0] & TagBitmask
 
-	if dlen < 3 {
+	// A TLV needs a tag and a length byte; the value may be empty, so two
+	// bytes is a complete element. Requiring three rejected every element
+	// with a zero-length value, and because decodePacket recurses, one such
+	// element anywhere failed the whole message. An LDAP simple bind with an
+	// empty password ends in exactly that (0x80 0x00), so those bind attempts
+	// were dropped before flamingo could record them. The length checks below
+	// still bound every read.
+	if dlen < 2 {
 		return p, data, fmt.Errorf("packet too short")
 	}
 

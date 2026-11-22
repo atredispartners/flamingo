@@ -47,6 +47,18 @@ type flamingoParameters struct {
 	SOCKSPorts         string
 	SIPPorts           string
 	RDPPorts           string
+	SMBPorts           string
+	MSSQLBrowserPorts  string
+	KerberosPorts      string
+	KerberosForceNTLM  bool
+	MQTTPorts          string
+	HTTPProxyPorts     string
+	ServeWPAD          bool
+	WPADProxy          string
+	MSRPCPorts         string
+	WinRMPorts         string
+	WinRMSPorts        string
+	ADWSPorts          string
 	TLSCertFile        string
 	TLSCertData        string
 	TLSKeyFile         string
@@ -83,7 +95,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&params.Quiet, "quiet", "q", false, "Hide startup banners and other extraneous output")
 	rootCmd.PersistentFlags().BoolVarP(&params.DontIgnoreFailures, "dont-ignore", "", false, "Treat individual listener failures as fatal")
 
-	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,redis,mongodb,amqp,socks,sip,rdp", "Specify a comma-separated list of protocols")
+	rootCmd.Flags().StringVarP(&params.Protocols, "protocols", "", "ssh,snmp,ldap,http,http-proxy,mqtt,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,mssql-browser,redis,mongodb,amqp,socks,sip,rdp,smb,kerberos,msrpc,winrm,adws,llmnr,nbtns,mdns", "Specify a comma-separated list of protocols")
 
 	// SNMP parameters
 	rootCmd.Flags().StringVarP(&params.SNMPPorts, "snmp-ports", "", "161", "The list of UDP ports to listen on for SNMP")
@@ -97,8 +109,13 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.LDAPSPorts, "ldaps-ports", "", "636", "The list of TCP ports to listen on for LDAPS")
 
 	// DNS parameters
-	rootCmd.Flags().StringVarP(&params.DNSPorts, "dns-ports", "", "53,5353", "The list of UDP ports to listen on for DNS")
-	rootCmd.Flags().StringVarP(&params.DNSResolveToIP, "dns-resolve-to", "", "", "The IP address used to respond to DNS Type A question. If empty, no response will be sent")
+	// 5353 belongs to the mdns listener, which is in the default --protocols
+	// list and speaks the multicast semantics this plain DNS server does not.
+	// Listing it here too meant whichever started first won and the other
+	// logged a bind error, so DNS defaults to 53 alone; pass --dns-ports
+	// 53,5353 to put the plain DNS server back on it.
+	rootCmd.Flags().StringVarP(&params.DNSPorts, "dns-ports", "", "53", "The list of UDP ports to listen on for DNS")
+	rootCmd.Flags().StringVarP(&params.DNSResolveToIP, "dns-resolve-to", "", "", "The address(es) to answer DNS queries with, comma-separated for both families (e.g. 10.0.0.1,fd00::1). If empty, queries are logged but not answered")
 
 	// FTP parameters
 	rootCmd.Flags().StringVarP(&params.FTPPorts, "ftp-ports", "", "21", "The list of TCP ports to listen on for FTP")
@@ -108,6 +125,9 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.HTTPSPorts, "https-ports", "", "443", "The list of TCP ports to listen on for HTTPS")
 	rootCmd.Flags().StringVarP(&params.HTTPBasicRealm, "http-realm", "", "Administration", "The HTTP basic authentication realm to present")
 	rootCmd.Flags().StringVarP(&params.HTTPAuthMode, "http-auth-mode", "", "ntlm", "The authentication mode for the HTTP listeners (ntlm or basic)")
+	rootCmd.Flags().StringVarP(&params.HTTPProxyPorts, "http-proxy-ports", "", "3128", "The list of TCP ports to listen on as an authenticating HTTP proxy")
+	rootCmd.Flags().BoolVarP(&params.ServeWPAD, "http-wpad", "", false, "Serve a WPAD proxy auto-config pointing clients at the proxy listener. Off by default: handing out a proxy config redirects a client's traffic. Authorized engagements only")
+	rootCmd.Flags().StringVarP(&params.WPADProxy, "wpad-proxy", "", "", "The host or host:port the WPAD file advertises (default: the address the client reached flamingo on)")
 
 	// VNC parameters
 	rootCmd.Flags().StringVarP(&params.VNCPorts, "vnc-ports", "", "5900", "The list of TCP ports to listen on for VNC")
@@ -131,8 +151,12 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.MySQLPorts, "mysql-ports", "", "3306", "The list of TCP ports to listen on for MySQL")
 	rootCmd.Flags().StringVarP(&params.PostgresPorts, "postgres-ports", "", "5432", "The list of TCP ports to listen on for PostgreSQL")
 	rootCmd.Flags().StringVarP(&params.MSSQLPorts, "mssql-ports", "", "1433", "The list of TCP ports to listen on for MSSQL")
+	rootCmd.Flags().StringVarP(&params.MSSQLBrowserPorts, "mssql-browser-ports", "", "1434", "The list of UDP ports to listen on for the SQL Server Browser")
 	rootCmd.Flags().StringVarP(&params.RedisPorts, "redis-ports", "", "6379", "The list of TCP ports to listen on for Redis")
 	rootCmd.Flags().StringVarP(&params.MongoDBPorts, "mongodb-ports", "", "27017", "The list of TCP ports to listen on for MongoDB")
+
+	// MQTT parameters
+	rootCmd.Flags().StringVarP(&params.MQTTPorts, "mqtt-ports", "", "1883", "The list of TCP ports to listen on for MQTT")
 
 	// AMQP(S) parameters
 	rootCmd.Flags().StringVarP(&params.AMQPPorts, "amqp-ports", "", "5672", "The list of TCP ports to listen on for AMQP")
@@ -146,6 +170,19 @@ func init() {
 
 	// RDP parameters
 	rootCmd.Flags().StringVarP(&params.RDPPorts, "rdp-ports", "", "3389", "The list of TCP ports to listen on for RDP")
+
+	// SMB parameters
+	rootCmd.Flags().StringVarP(&params.SMBPorts, "smb-ports", "", "445,139", "The list of TCP ports to listen on for SMB")
+
+	// Windows service parameters
+	rootCmd.Flags().StringVarP(&params.MSRPCPorts, "msrpc-ports", "", "135", "The list of TCP ports to listen on for MSRPC")
+	rootCmd.Flags().StringVarP(&params.WinRMPorts, "winrm-ports", "", "5985", "The list of TCP ports to listen on for WinRM")
+	rootCmd.Flags().StringVarP(&params.WinRMSPorts, "winrms-ports", "", "5986", "The list of TCP ports to listen on for WinRM over TLS")
+	rootCmd.Flags().StringVarP(&params.ADWSPorts, "adws-ports", "", "9389", "The list of TCP ports to listen on for Active Directory Web Services")
+
+	// Kerberos parameters
+	rootCmd.Flags().StringVarP(&params.KerberosPorts, "kerberos-ports", "", "88", "The list of TCP and UDP ports to listen on for Kerberos")
+	rootCmd.Flags().BoolVarP(&params.KerberosForceNTLM, "kerberos-force-ntlm", "", false, "Answer every AS-REQ with an unsupported-etype error, pushing clients back to NTLM")
 
 	rootCmd.Flags().StringVarP(&params.TLSCertFile, "tls-cert", "", "", "An optional x509 certificate for TLS listeners")
 	rootCmd.Flags().StringVarP(&params.TLSKeyFile, "tls-key", "", "", "An optional x509 key for TLS listeners")

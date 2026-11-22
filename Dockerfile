@@ -1,4 +1,8 @@
-FROM golang:1.13.6
-RUN go get -u -v github.com/atredispartners/flamingo
-RUN go install -v github.com/atredispartners/flamingo
-ENTRYPOINT $GOPATH/bin/flamingo
+FROM golang:1.27 AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /flamingo .
+
+FROM gcr.io/distroless/static-debian12
+COPY --from=build /flamingo /flamingo
+ENTRYPOINT ["/flamingo"]

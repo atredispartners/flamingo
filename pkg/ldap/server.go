@@ -14,6 +14,20 @@ import (
 type Binder interface {
 	Bind(bindDN, bindSimplePw string, conn net.Conn) (LDAPResultCode, error)
 }
+
+// SASLBinder is an optional interface a Binder may also implement to receive
+// SASL bind requests. flamingo change: without it the server refuses every
+// SASL mechanism, which drops the GSS-SPNEGO/NTLM binds Windows clients
+// actually send.
+//
+// mechanism is the SASL mechanism name the client named and credentials its
+// (possibly empty) initial response. A mechanism that needs more than one
+// round trip returns LDAPResultSaslBindInProgress together with the
+// serverSaslCreds to challenge the client with; the client's next bind
+// request arrives as a further call on the same conn.
+type SASLBinder interface {
+	BindSASL(bindDN, mechanism string, credentials []byte, conn net.Conn) (result LDAPResultCode, serverSaslCreds []byte, err error)
+}
 type Searcher interface {
 	Search(boundDN string, req SearchRequest, conn net.Conn) (ServerSearchResult, error)
 }
@@ -303,7 +317,7 @@ handler:
 
 		case ApplicationBindRequest:
 			server.Stats.countBinds(1)
-			ldapResultCode := HandleBindRequest(req, server.BindFns, conn)
+			ldapResultCode, serverSaslCreds := HandleBindRequestSASL(req, server.BindFns, conn)
 			if ldapResultCode == LDAPResultSuccess {
 				boundDN, ok = req.Children[1].Value.(string)
 				if !ok {
@@ -311,7 +325,7 @@ handler:
 					break handler
 				}
 			}
-			responsePacket := encodeBindResponse(messageID, ldapResultCode)
+			responsePacket := encodeBindResponse(messageID, ldapResultCode, serverSaslCreds)
 			if err = sendPacket(conn, responsePacket); err != nil {
 				// log.Printf("sendPacket error %s", err.Error())
 				break handler

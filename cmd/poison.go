@@ -1,0 +1,133 @@
+package cmd
+
+import (
+	"github.com/atredispartners/flamingo/pkg/flamingo"
+	log "github.com/sirupsen/logrus"
+)
+
+// poisonParameters holds the flags for the name-poisoning listeners (LLMNR,
+// NBT-NS, mDNS). They live here rather than in flamingoParameters so the
+// poisoner wiring stays self-contained.
+type poisonParameters struct {
+	LLMNRPorts string
+	NBTNSPorts string
+	MDNSPorts  string
+
+	SpoofIPv4  string
+	SpoofIPv6  string
+	AnswerName string
+	TTL        int
+
+	RespondTo         string
+	DontRespondTo     string
+	RespondToName     string
+	DontRespondToName string
+	DontRespondToTLD  string
+	Analyze           bool
+	AnswerBroadcast   bool
+}
+
+var poisonParams = &poisonParameters{}
+
+func init() {
+	// Name poisoning is active, not passive: answering is what makes hosts
+	// connect to flamingo. The line is drawn by reach, not by listener. These
+	// listeners are in the default --protocols list: they log every query and
+	// answer the ones addressed directly to this host, like any other
+	// listener. Answering a query multicast or broadcast to the segment
+	// reaches hosts that were never talking to flamingo, so that half is
+	// opt-in behind --poison-broadcast and belongs inside an authorized
+	// engagement scope.
+	rootCmd.Flags().StringVarP(&poisonParams.LLMNRPorts, "llmnr-ports", "", "5355", "The list of UDP ports to listen on for LLMNR. Broadcast answering needs --poison-broadcast")
+	rootCmd.Flags().StringVarP(&poisonParams.NBTNSPorts, "nbtns-ports", "", "137", "The list of UDP ports to listen on for NBT-NS. Broadcast answering needs --poison-broadcast")
+	rootCmd.Flags().StringVarP(&poisonParams.MDNSPorts, "mdns-ports", "", "5353", "The list of UDP ports to listen on for mDNS. Broadcast answering needs --poison-broadcast")
+
+	// Advertised (spoofed) addresses. When unset, resolution falls back
+	// through the arrival interface, the route toward the querier, and any
+	// routable local address, so a poisoner answers with this host's own
+	// address rather than giving up.
+	rootCmd.Flags().StringVarP(&poisonParams.SpoofIPv4, "poison-spoof-ip", "", "", "The IPv4 address to answer poisoned queries with (default: this host's own address on the arrival interface)")
+	rootCmd.Flags().StringVarP(&poisonParams.SpoofIPv6, "poison-spoof-ip6", "", "", "The IPv6 address to answer poisoned queries with (default: this host's own address on the arrival interface)")
+	rootCmd.Flags().StringVarP(&poisonParams.AnswerName, "poison-answer-name", "", "", "Optional LLMNR answer-record name, overriding the queried name")
+	rootCmd.Flags().IntVarP(&poisonParams.TTL, "poison-ttl", "", -1, "Override the answer TTL (seconds) for all poisoners; -1 keeps per-protocol defaults")
+
+	// Scoping policy. These keep poisoning inside an authorized engagement
+	// scope, so they govern the broadcast and multicast answers -- the ones
+	// that assert a name to hosts which never asked this host anything.
+	// Answering a query addressed to this host is ordinary listener
+	// behaviour, not poisoning, and is not scoped here.
+	rootCmd.Flags().StringVarP(&poisonParams.RespondTo, "poison-respond-to", "", "", "Only poison broadcast queries from these source addresses (comma list of IP, CIDR, or range)")
+	rootCmd.Flags().StringVarP(&poisonParams.DontRespondTo, "poison-dont-respond-to", "", "", "Never poison broadcast queries from these source addresses (comma list of IP, CIDR, or range)")
+	rootCmd.Flags().StringVarP(&poisonParams.RespondToName, "poison-respond-to-name", "", "", "Only poison broadcast queries for these names (comma list, case-insensitive)")
+	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToName, "poison-dont-respond-to-name", "", flamingo.DefaultDontRespondToName, "Never poison broadcast queries for these names (comma list, case-insensitive)")
+	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToTLD, "poison-dont-respond-to-tld", "", flamingo.DefaultDontRespondToTLD, "Never poison broadcast queries whose name ends with these suffixes (comma list)")
+	rootCmd.Flags().BoolVarP(&poisonParams.Analyze, "poison-analyze", "", false, "Analyze mode: observe and log broadcast name queries without poisoning them. Queries addressed directly to this host are still answered")
+	rootCmd.Flags().BoolVarP(&poisonParams.AnswerBroadcast, "poison-broadcast", "", false, "Answer multicast and broadcast name queries (LLMNR, NBT-NS, mDNS poisoning). Off by default: without it these listeners only answer queries sent directly to this host. Authorized engagements only")
+}
+
+// poisonPolicy builds the shared scope policy from the poisoner flags.
+func poisonPolicy() *flamingo.ScopePolicy {
+	policy, err := flamingo.NewScopePolicy(
+		poisonParams.RespondTo,
+		poisonParams.DontRespondTo,
+		poisonParams.RespondToName,
+		poisonParams.DontRespondToName,
+		poisonParams.DontRespondToTLD,
+		poisonParams.Analyze,
+	)
+	if err != nil {
+		log.Fatalf("invalid poisoner scope policy: %s", err)
+	}
+	return policy
+}
+
+func setupLLMNR(rw *flamingo.RecordWriter) {
+	policy := poisonPolicy()
+	startListeners("llmnr", poisonParams.LLMNRPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfLLMNR()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Policy = policy
+		conf.AnswerBroadcast = poisonParams.AnswerBroadcast
+		conf.SpoofIPv4 = poisonParams.SpoofIPv4
+		conf.SpoofIPv6 = poisonParams.SpoofIPv6
+		conf.AnswerName = poisonParams.AnswerName
+		if poisonParams.TTL >= 0 {
+			conf.TTL = uint32(poisonParams.TTL)
+		}
+		return conf.Shutdown, flamingo.SpawnLLMNR(conf)
+	})
+}
+
+func setupNBTNS(rw *flamingo.RecordWriter) {
+	policy := poisonPolicy()
+	startListeners("nbtns", poisonParams.NBTNSPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfNBTNS()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Policy = policy
+		conf.AnswerBroadcast = poisonParams.AnswerBroadcast
+		conf.SpoofIPv4 = poisonParams.SpoofIPv4
+		if poisonParams.TTL >= 0 {
+			conf.TTL = uint32(poisonParams.TTL)
+		}
+		return conf.Shutdown, flamingo.SpawnNBTNS(conf)
+	})
+}
+
+func setupMDNS(rw *flamingo.RecordWriter) {
+	policy := poisonPolicy()
+	startListeners("mdns", poisonParams.MDNSPorts, func(port uint16) (func(), error) {
+		conf := flamingo.NewConfMDNS()
+		conf.BindPort = port
+		conf.RecordWriter = rw
+		conf.Policy = policy
+		conf.AnswerBroadcast = poisonParams.AnswerBroadcast
+		conf.SpoofIPv4 = poisonParams.SpoofIPv4
+		conf.SpoofIPv6 = poisonParams.SpoofIPv6
+		if poisonParams.TTL >= 0 {
+			conf.TTL = uint32(poisonParams.TTL)
+		}
+		return conf.Shutdown, flamingo.SpawnMDNS(conf)
+	})
+}

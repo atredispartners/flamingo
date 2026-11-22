@@ -158,10 +158,10 @@ func rdpTestTLSClient(t *testing.T, c net.Conn) *tls.Conn {
 // rdpTestNegotiateMsg builds an NTLM NEGOTIATE message with a VERSION field.
 func rdpTestNegotiateMsg() []byte {
 	m := make([]byte, 40)
-	copy(m, rdpNTLMSig)
+	copy(m, ntlmSignature)
 	binary.LittleEndian.PutUint32(m[8:], 1)
-	binary.LittleEndian.PutUint32(m[12:], rdpNTLMUnicode|rdpNTLMRequestTarget|rdpNTLMSign|rdpNTLMSeal|
-		rdpNTLMNTLM|rdpNTLMAlwaysSign|rdpNTLMExtendedSec|rdpNTLMVersion|rdpNTLM128|rdpNTLMKeyExch|rdpNTLM56)
+	binary.LittleEndian.PutUint32(m[12:], NTLMFlagUnicode|NTLMFlagRequestTarget|NTLMFlagSign|NTLMFlagSeal|
+		NTLMFlagNTLM|NTLMFlagAlwaysSign|NTLMFlagExtendedSessionSecurity|NTLMFlagVersion|NTLMFlag128|NTLMFlagKeyExch|NTLMFlag56)
 	copy(m[32:40], []byte{10, 0, 0x63, 0x4a, 0, 0, 0, 15})
 	return m
 }
@@ -170,7 +170,7 @@ func rdpTestNegotiateMsg() []byte {
 // strings.
 func rdpTestAuthenticateMsg(user, domain, ws string, lm, nt []byte) []byte {
 	m := make([]byte, 88)
-	copy(m, rdpNTLMSig)
+	copy(m, ntlmSignature)
 	binary.LittleEndian.PutUint32(m[8:], 3)
 	var payload []byte
 	put := func(at int, b []byte) {
@@ -181,13 +181,13 @@ func rdpTestAuthenticateMsg(user, domain, ws string, lm, nt []byte) []byte {
 	}
 	put(12, lm)
 	put(20, nt)
-	put(28, rdpUTF16Bytes(domain))
-	put(36, rdpUTF16Bytes(user))
-	put(44, rdpUTF16Bytes(ws))
+	put(28, utf16Bytes(domain))
+	put(36, utf16Bytes(user))
+	put(44, utf16Bytes(ws))
 	put(52, nil)
-	binary.LittleEndian.PutUint32(m[60:], rdpNTLMUnicode|rdpNTLMRequestTarget|rdpNTLMSign|rdpNTLMSeal|
-		rdpNTLMNTLM|rdpNTLMAlwaysSign|rdpNTLMExtendedSec|rdpNTLMTargetInfo|rdpNTLMVersion|rdpNTLM128|
-		rdpNTLMKeyExch|rdpNTLM56)
+	binary.LittleEndian.PutUint32(m[60:], NTLMFlagUnicode|NTLMFlagRequestTarget|NTLMFlagSign|NTLMFlagSeal|
+		NTLMFlagNTLM|NTLMFlagAlwaysSign|NTLMFlagExtendedSessionSecurity|NTLMFlagTargetInfo|NTLMFlagVersion|NTLMFlag128|
+		NTLMFlagKeyExch|NTLMFlag56)
 	copy(m[64:72], []byte{10, 0, 0x63, 0x4a, 0, 0, 0, 15})
 	return append(m, payload...)
 }
@@ -195,9 +195,9 @@ func rdpTestAuthenticateMsg(user, domain, ws string, lm, nt []byte) []byte {
 // rdpTestNTOWFv2 is NTOWFv2(password, user, domain).
 func rdpTestNTOWFv2(password, user, domain string) []byte {
 	h := md4.New()
-	h.Write(rdpUTF16Bytes(password))
+	h.Write(utf16Bytes(password))
 	m := hmac.New(md5.New, h.Sum(nil))
-	m.Write(rdpUTF16Bytes(strings.ToUpper(user) + domain))
+	m.Write(utf16Bytes(strings.ToUpper(user) + domain))
 	return m.Sum(nil)
 }
 
@@ -213,7 +213,7 @@ func rdpTestNTLMv2Proof(password, user, domain string, challenge, blob []byte) [
 // target info of a CHALLENGE message.
 func rdpTestNTLMv2Blob(targetInfo []byte) []byte {
 	blob := []byte{1, 1, 0, 0, 0, 0, 0, 0}
-	blob = binary.LittleEndian.AppendUint64(blob, rdpFiletime(time.Now()))
+	blob = binary.LittleEndian.AppendUint64(blob, winFiletime(time.Now()))
 	blob = append(blob, 0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04)
 	blob = append(blob, 0, 0, 0, 0)
 	blob = append(blob, targetInfo...)
@@ -231,7 +231,7 @@ func rdpTestConnectInitial(name string, channels []string, protocols uint32) []b
 	binary.LittleEndian.PutUint16(core[10:], 0xaa03)
 	binary.LittleEndian.PutUint32(core[12:], 0x409)
 	binary.LittleEndian.PutUint32(core[16:], 19041)
-	copy(core[20:52], rdpUTF16Bytes(name))
+	copy(core[20:52], utf16Bytes(name))
 	binary.LittleEndian.PutUint32(core[52:], 4)
 	binary.LittleEndian.PutUint16(core[128:], 0xca01)
 	binary.LittleEndian.PutUint16(core[130:], 1)
@@ -272,7 +272,7 @@ func rdpTestConnectInitial(name string, channels []string, protocols uint32) []b
 func rdpTestClientInfo(domain, user, password string) []byte {
 	p := binary.LittleEndian.AppendUint32(nil, 0)
 	p = binary.LittleEndian.AppendUint32(p, rdpInfoUnicode|0x01|0x08|0x40)
-	fields := [][]byte{rdpUTF16Bytes(domain), rdpUTF16Bytes(user), rdpUTF16Bytes(password), nil, nil}
+	fields := [][]byte{utf16Bytes(domain), utf16Bytes(user), utf16Bytes(password), nil, nil}
 	for _, f := range fields {
 		p = binary.LittleEndian.AppendUint16(p, uint16(len(f)))
 	}
@@ -281,10 +281,10 @@ func rdpTestClientInfo(domain, user, password string) []byte {
 		p = append(p, 0, 0)
 	}
 	p = binary.LittleEndian.AppendUint16(p, 2)
-	addr := append(rdpUTF16Bytes("10.1.2.3"), 0, 0)
+	addr := append(utf16Bytes("10.1.2.3"), 0, 0)
 	p = binary.LittleEndian.AppendUint16(p, uint16(len(addr)))
 	p = append(p, addr...)
-	dir := append(rdpUTF16Bytes(`C:\Windows\System32\mstscax.dll`), 0, 0)
+	dir := append(utf16Bytes(`C:\Windows\System32\mstscax.dll`), 0, 0)
 	p = binary.LittleEndian.AppendUint16(p, uint16(len(dir)))
 	return append(p, dir...)
 }
@@ -320,18 +320,18 @@ func TestRDPCredSSP(t *testing.T) {
 		t.Fatalf("read challenge: %s", err)
 	}
 	resp, err := rdpParseTSRequest(raw)
-	if err != nil || len(resp.tokens) != 1 || rdpNTLMType(resp.tokens[0]) != 2 {
+	if err != nil || len(resp.tokens) != 1 || NTLMMessageType(resp.tokens[0]) != 2 {
 		t.Fatalf("challenge: %v %+v", err, resp)
 	}
 	chal := resp.tokens[0]
 	challenge := chal[24:32]
-	if !bytes.Equal(challenge, RDPNTLMChallenge[:]) {
-		t.Fatalf("server challenge %x != fixed %x", challenge, RDPNTLMChallenge[:])
+	if !bytes.Equal(challenge, NTLMConf.Challenge[:]) {
+		t.Fatalf("server challenge %x != fixed %x", challenge, NTLMConf.Challenge[:])
 	}
-	if target := rdpUTF16String(rdpNTLMSecBuf(chal, 12)); target != rdpDomain {
-		t.Fatalf("target name %q, want %q", target, rdpDomain)
+	if target := utf16String(ntlmSecBuf(chal, 12)); target != NTLMConf.NetBIOSDomainName {
+		t.Fatalf("target name %q, want %q", target, NTLMConf.NetBIOSDomainName)
 	}
-	targetInfo := rdpNTLMSecBuf(chal, 40)
+	targetInfo := ntlmSecBuf(chal, 40)
 	if len(targetInfo) == 0 {
 		t.Fatal("challenge has no target info")
 	}
@@ -363,7 +363,7 @@ func TestRDPCredSSP(t *testing.T) {
 		"ntlm_version":   "v2",
 		"client_version": "10.0.19043",
 		"cookie_user":    "admin",
-		"challenge":      hex.EncodeToString(RDPNTLMChallenge[:]),
+		"challenge":      hex.EncodeToString(NTLMConf.Challenge[:]),
 		"response":       hex.EncodeToString(nt),
 	}
 	for k, v := range want {

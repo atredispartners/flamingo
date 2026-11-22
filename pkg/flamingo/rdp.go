@@ -305,33 +305,33 @@ func (s *rdpSession) credssp() error {
 	if req.version != 0 && req.version < version {
 		version = req.version
 	}
-	flags, _ := rdpNTLMParseNegotiate(msg)
-	if err := s.write(rdpEncodeTSRequest(version, rdpNTLMChallengeMessage(flags), nil)); err != nil {
+	flags, _ := ParseNTLMNegotiate(msg)
+	if err := s.write(rdpEncodeTSRequest(version, NTLMChallengeMessage(flags), nil)); err != nil {
 		return err
 	}
 	_, msg, err = s.readNTLM(3)
 	if err != nil {
 		return err
 	}
-	a, err := rdpNTLMParseAuthenticate(msg)
+	a, err := ParseNTLMAuthenticate(msg)
 	if err != nil {
 		return fmt.Errorf("credssp: %w", err)
 	}
 
 	fields := map[string]string{
-		"username":     a.user,
-		"domain":       a.domain,
-		"ntlm_version": a.ntlmVersion(),
-		"challenge":    hex.EncodeToString(RDPNTLMChallenge[:]),
-		"response":     hex.EncodeToString(a.nt),
+		"username":     a.User,
+		"domain":       a.Domain,
+		"ntlm_version": a.NTLMVersion(),
+		"challenge":    hex.EncodeToString(NTLMConf.Challenge[:]),
+		"response":     hex.EncodeToString(a.NT),
 	}
-	if a.workstation != "" {
-		fields["workstation"] = a.workstation
+	if a.Workstation != "" {
+		fields["workstation"] = a.Workstation
 	}
-	if a.version != "" {
-		fields["client_version"] = a.version
+	if a.Version != "" {
+		fields["client_version"] = a.Version
 	}
-	if line := rdpNTLMHashcat(a); line != "" {
+	if line, _ := NTLMHashcat(a); line != "" {
 		fields["hashcat"] = line
 	}
 	s.record("credssp", fields)
@@ -354,11 +354,11 @@ func (s *rdpSession) readNTLM(want uint32) (*rdpTSRequest, []byte, error) {
 	if len(req.tokens) == 0 {
 		return nil, nil, errors.New("credssp: TSRequest without nego token")
 	}
-	msg := rdpNTLMFind(req.tokens[0])
+	msg := FindNTLMSSP(req.tokens[0])
 	if msg == nil {
 		return nil, nil, errors.New("credssp: non-NTLM nego token")
 	}
-	if typ := rdpNTLMType(msg); typ != want {
+	if typ := NTLMMessageType(msg); typ != want {
 		return nil, nil, fmt.Errorf("credssp: NTLM message type %d, want %d", typ, want)
 	}
 	return req, msg, nil
@@ -623,7 +623,7 @@ func rdpParseClientBlocks(b []byte) *rdpClientData {
 		switch typ {
 		case rdpCSCore:
 			if len(d) >= 52 {
-				cd.name = rdpUTF16String(d[20:52])
+				cd.name = utf16String(d[20:52])
 			}
 		case rdpCSNet:
 			if len(d) >= 4 {
@@ -739,7 +739,7 @@ func rdpParseClientInfo(p []byte) (*rdpClientInfo, error) {
 		b := p[off : off+n]
 		off += n + nul
 		if unicode {
-			return rdpUTF16String(b), nil
+			return utf16String(b), nil
 		}
 		return strings.ToValidUTF8(strings.TrimRight(string(b), "\x00"), "?"), nil
 	}
