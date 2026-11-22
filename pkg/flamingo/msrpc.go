@@ -21,9 +21,16 @@ type ConfMSRPC struct {
 	BindPort     uint16
 	BindHost     string
 	RecordWriter *RecordWriter
-	capture      *NTLMCapture
-	shutdown     bool
-	m            sync.Mutex
+
+	// Responder decides the challenge a victim is answered with and whether
+	// it is told the logon succeeded. Nil — the default — is capture only.
+	// A relay responder makes this listener forward to a target instead; it
+	// rides the same NTLMCapture seam as capture, so nothing else changes.
+	Responder NTLMResponder
+
+	capture  *NTLMCapture
+	shutdown bool
+	m        sync.Mutex
 }
 
 // NewConfMSRPC creates a default configuration for the MSRPC capture server.
@@ -64,6 +71,7 @@ func SpawnMSRPC(c *ConfMSRPC) error {
 	}
 	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
 	capture := NewNTLMCapture("msrpc", addr, c.RecordWriter)
+	capture.Responder = c.Responder
 
 	c.m.Lock()
 	if c.shutdown {

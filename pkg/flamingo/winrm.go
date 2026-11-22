@@ -20,9 +20,16 @@ type ConfWinRM struct {
 	BindPort     uint16
 	BindHost     string
 	RecordWriter *RecordWriter
-	capture      *NTLMCapture
-	shutdown     bool
-	m            sync.Mutex
+
+	// Responder decides the challenge a victim is answered with and whether
+	// it is told the logon succeeded. Nil — the default — is capture only.
+	// A relay responder makes this listener forward to a target instead; it
+	// rides the same NTLMCapture seam as capture, so nothing else changes.
+	Responder NTLMResponder
+
+	capture  *NTLMCapture
+	shutdown bool
+	m        sync.Mutex
 }
 
 // NewConfWinRM creates a default configuration for the WinRM capture server.
@@ -63,6 +70,7 @@ func SpawnWinRM(c *ConfWinRM) error {
 	}
 	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
 	capture := NewNTLMCapture("winrm", addr, c.RecordWriter)
+	capture.Responder = c.Responder
 
 	c.m.Lock()
 	if c.shutdown {
@@ -93,9 +101,16 @@ type ConfWinRMS struct {
 	TLSCertFile  string
 	TLSKeyFile   string
 	RecordWriter *RecordWriter
-	capture      *NTLMCapture
-	shutdown     bool
-	m            sync.Mutex
+
+	// Responder decides the challenge a victim is answered with and whether
+	// it is told the logon succeeded. Nil — the default — is capture only.
+	// A relay responder makes this listener forward to a target instead; it
+	// rides the same NTLMCapture seam as capture, so nothing else changes.
+	Responder NTLMResponder
+
+	capture  *NTLMCapture
+	shutdown bool
+	m        sync.Mutex
 }
 
 // NewConfWinRMS creates a default configuration for the WinRM-over-TLS
@@ -137,6 +152,7 @@ func SpawnWinRMS(c *ConfWinRMS) error {
 	}
 	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
 	capture := NewNTLMCapture("winrms", addr, c.RecordWriter)
+	capture.Responder = c.Responder
 
 	c.m.Lock()
 	if c.shutdown {

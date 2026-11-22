@@ -34,9 +34,16 @@ type ConfADWS struct {
 	BindPort     uint16
 	BindHost     string
 	RecordWriter *RecordWriter
-	capture      *NTLMCapture
-	shutdown     bool
-	m            sync.Mutex
+
+	// Responder decides the challenge a victim is answered with and whether
+	// it is told the logon succeeded. Nil — the default — is capture only.
+	// A relay responder makes this listener forward to a target instead; it
+	// rides the same NTLMCapture seam as capture, so nothing else changes.
+	Responder NTLMResponder
+
+	capture  *NTLMCapture
+	shutdown bool
+	m        sync.Mutex
 }
 
 // NewConfADWS creates a default configuration for the ADWS capture server.
@@ -74,6 +81,7 @@ func (c *ConfADWS) Shutdown() {
 func SpawnADWS(c *ConfADWS) error {
 	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
 	capture := NewNTLMCapture("adws", addr, c.RecordWriter)
+	capture.Responder = c.Responder
 
 	c.m.Lock()
 	if c.shutdown {
