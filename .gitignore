@@ -3,3 +3,6 @@
 .DS_Store
 dist/
 
+
+# Agent worktrees and local session state
+.claude/worktrees/
