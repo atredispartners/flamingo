@@ -362,7 +362,7 @@ type RelayOptions struct {
 //
 // Note what it does not hold: a relay.Config. Upstream writes relayedUser,
 // relayedDomain and delegateTarget onto a Config from whichever goroutine is
-// handling a session, with no lock (see docs/plan-smb-msrpc-relay.md §3), so
+// handling a session, with no lock, so
 // one Config shared across concurrent victims is a data race. Every relay
 // session here builds its own, and relaySession.cfg is the only place one
 // lives.

@@ -23,7 +23,7 @@ import (
 // records the AUTHENTICATE, and refuses the logon.
 //
 // Two upstream limitations shape the implementation, and neither is optional
-// to handle (see docs/plan-smb-msrpc-relay.md §3):
+// to handle:
 //
 //   - Victim goroutines block on Type2Ch and ResultCh with no timeout of their
 //     own, so every exit path here has to release both channels or the

@@ -829,9 +829,9 @@ func TestRelayPolicies(t *testing.T) {
 	}
 }
 
-// TestRelayConcurrentSessionsDoNotShareConfig checks the upstream data race
-// named in docs/plan-smb-msrpc-relay.md §3: relay.Config carries per-session
-// fields written without a lock, so concurrent victims must never share one.
+// TestRelayConcurrentSessionsDoNotShareConfig checks an upstream data race:
+// relay.Config carries per-session fields written without a lock, so
+// concurrent victims must never share one.
 func TestRelayConcurrentSessionsDoNotShareConfig(t *testing.T) {
 	const victims = 12
 
