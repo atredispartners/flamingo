@@ -57,24 +57,30 @@ import (
 // than a generic failure, and relayOutcomeSigning reports it: see
 // relaySession.probe.
 //
-// # The 32-bit hazard does not reach the client path
+// # Why no listener here is built on upstream's servers
 //
-// relaysafety.go refuses to start the MSRPC and WinRM listeners on 32-bit
-// builds because relay.extractNTLMType3Info (client.go:544) bounds-checks with
-// int arithmetic and then slices with raw uint32s, which panics where int is
-// 32 bits. Relaying does not widen that exposure. Every caller of that
-// function is either one of upstream's own ProtocolServer implementations
-// (rpc_server.go, http_server.go, server.go, raw_server.go, wcf_server.go) or
-// upstream's monolithic orchestrator relay.Run / handleAuth (relay.go:359),
-// together with the SOCKS plugins. The relay path here drives ProtocolClient
-// methods directly — InitConnection, SendNegotiate, SendAuth, IsAdmin,
-// KeepAlive, Kill — and none of the clients parses the AUTHENTICATE: SendAuth
-// copies the bytes into a SESSION_SETUP and sends them. relay.Run is never
-// called, SOCKS is never enabled, and the attack modules take a session rather
-// than a message. So relay adds no 32-bit panic surface and is not gated on
-// the word size: on a 32-bit build the MSRPC and WinRM listeners still decline
-// to start, and relaying over the native SMB and ADWS listeners, whose parsers
-// are flamingo's own, stays available.
+// gopacket's relay.extractNTLMType3Info (client.go:544) bounds-checks a
+// security buffer with int arithmetic and then slices with the raw uint32.
+// Where int is 64 bits that is sound; where it is 32 bits an offset such as
+// 0xFFFFFFF0 converts to a negative number, passes the check, and the slice
+// panics. It is reached from every one of upstream's own ProtocolServer
+// implementations (rpc_server.go, http_server.go, server.go, raw_server.go,
+// wcf_server.go) on a message supplied by whoever connected, so it is a
+// capture-path hazard, not only a relay one. The panic happens on an upstream
+// goroutine, so no recover() of ours contains it and the process dies.
+//
+// That is why flamingo's SMB, ADWS, MSRPC and WinRM listeners are all its own
+// code: every byte an unauthenticated peer sends is parsed by parsers that
+// bounds-check. A listener added later must not be built on one of upstream's
+// ProtocolServer implementations, or it reintroduces this on the 386 and arm
+// builds.
+//
+// Relaying does not widen the exposure. The relay path drives ProtocolClient
+// methods directly -- InitConnection, SendNegotiate, SendAuth, IsAdmin,
+// KeepAlive, Kill -- and no client parses the AUTHENTICATE: SendAuth copies
+// the bytes into a SESSION_SETUP and sends them. relay.Run is never called,
+// SOCKS is never enabled, and the attack modules take a session rather than a
+// message.
 
 // Relay target schemes and their default ports. A target named without a
 // scheme is SMB, which is what a poisoned name lands on in practice.

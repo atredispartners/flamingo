@@ -491,3 +491,59 @@ func TestNTLMMessageType(t *testing.T) {
 		t.Errorf("truncated negotiate reported version %q", v)
 	}
 }
+
+// TestNTLMSecBufRejectsWideOffsets pins the bounds check that makes the NTLM
+// parser safe on 32-bit builds.
+//
+// A security buffer offset is a uint32 taken straight off the wire. Converting
+// it to int and comparing is only sound if the negative case is handled:
+// where int is 32 bits, an offset like 0xFFFFFFF0 converts to -16, so a check
+// that only tests the upper bound passes and the slice that follows panics.
+// That is the defect in the upstream library flamingo's listeners were moved
+// off; ntlmSecBuf tests start < 0 as well, and expresses the length check as
+// n > len(msg)-start so the addition cannot overflow either.
+//
+// On a 64-bit build these offsets are rejected by the upper bound instead, so
+// this test passes on both widths -- which is the point. It is a guard against
+// the check being "simplified" back.
+func TestNTLMSecBufRejectsWideOffsets(t *testing.T) {
+	msg := make([]byte, 64)
+
+	cases := []struct {
+		name   string
+		length uint16
+		offset uint32
+	}{
+		{"offset that is negative as a 32-bit int", 8, 0xFFFFFFF0},
+		{"offset at the sign boundary", 8, 0x80000000},
+		{"maximum offset", 8, 0xFFFFFFFF},
+		{"offset just past the buffer", 8, 65},
+		{"length running past the end", 0xFFFF, 32},
+		{"length past the end at the last byte", 2, 63},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hdr := make([]byte, 8)
+			binary.LittleEndian.PutUint16(hdr[0:2], tc.length)
+			binary.LittleEndian.PutUint16(hdr[2:4], tc.length)
+			binary.LittleEndian.PutUint32(hdr[4:8], tc.offset)
+			copy(msg[12:20], hdr)
+
+			// Must return nil rather than panicking on any word size.
+			if got := ntlmSecBuf(msg, 12); got != nil {
+				t.Errorf("ntlmSecBuf returned %d bytes, want nil", len(got))
+			}
+		})
+	}
+
+	// A well-formed buffer still resolves, so the check is not simply
+	// rejecting everything.
+	binary.LittleEndian.PutUint16(msg[12:14], 4)
+	binary.LittleEndian.PutUint16(msg[14:16], 4)
+	binary.LittleEndian.PutUint32(msg[16:20], 40)
+	copy(msg[40:44], "abcd")
+	if got := ntlmSecBuf(msg, 12); string(got) != "abcd" {
+		t.Errorf("a valid security buffer resolved to %q, want abcd", got)
+	}
+}

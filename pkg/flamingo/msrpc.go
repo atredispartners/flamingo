@@ -80,9 +80,6 @@ func (c *ConfMSRPC) Shutdown() {
 
 // SpawnMSRPC starts a logging MSRPC server on TCP, normally port 135.
 func SpawnMSRPC(c *ConfMSRPC) error {
-	if !upstreamType3Safe {
-		return errUpstream32Bit("msrpc")
-	}
 	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
 	capture := NewNTLMCapture("msrpc", addr, c.RecordWriter)
 	capture.Responder = c.Responder
