@@ -9,6 +9,7 @@ import (
 	"net"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/mandiant/gopacket/pkg/relay"
 	log "github.com/sirupsen/logrus"
@@ -99,9 +100,12 @@ func SpawnMSRPC(c *ConfMSRPC) error {
 	return nil
 }
 
-// DCE/RPC PDU types (C706 12.1, MS-RPCE 2.2.2.3). Only the connection-oriented
-// bind path matters here: a capture never carries a call.
+// DCE/RPC PDU types (C706 12.1, MS-RPCE 2.2.2.3). The bind path is what earns
+// the credential; REQUEST and RESPONSE are here only so that the probe a DCOM
+// client makes before it authenticates is answered rather than refused.
 const (
+	rpcPktRequest       = 0
+	rpcPktResponse      = 2
 	rpcPktFault         = 3
 	rpcPktBind          = 11
 	rpcPktBindAck       = 12
@@ -139,10 +143,51 @@ const (
 	rpcRejectAuthTypeUnrec = 8
 )
 
-// Fault status codes placed in the FAULT PDU.
+// Fault status codes placed in the FAULT PDU. nca_s_op_rng_error is the
+// honest answer to a call flamingo does not implement: the association is
+// fine, the operation is not, so the client is free to carry on.
 const (
 	rpcStatusAccessDenied = 0x00000005
+	rpcStatusOpRngError   = 0x1c010002
 	rpcStatusProtoError   = 0x1c01000b
+)
+
+// rpcObjectExporterIID is IObjectExporter (IOXIDResolver),
+// 99fcfec4-5260-101b-bbcb-00aa0021347a, in the little-endian wire encoding a
+// client puts in a presentation context's abstract syntax. This is the
+// interface a DCOM client binds to on 135 before it does anything else.
+var rpcObjectExporterIID = []byte{
+	0xc4, 0xfe, 0xfc, 0x99, 0x60, 0x52, 0x1b, 0x10,
+	0xbb, 0xcb, 0x00, 0xaa, 0x00, 0x21, 0x34, 0x7a,
+}
+
+// rpcOpnumServerAlive2 is IObjectExporter::ServerAlive2 (MS-DCOM 3.1.2.5.1.4).
+// It is the one call this listener answers: a client that pings the resolver
+// before it authenticates has to be satisfied, or it never gets as far as the
+// NTLMSSP exchange.
+const rpcOpnumServerAlive2 = 5
+
+// ServerAlive2 reply constants.
+const (
+	// The COMVERSION of the object resolver (MS-DCOM 2.2.11). 5.7 is what
+	// current Windows reports, and 5.6 is the version that introduced
+	// ServerAlive2 in the first place.
+	rpcComVersionMajor = 5
+	rpcComVersionMinor = 7
+
+	// rpcTowerIDTCP is the ncacn_ip_tcp protocol sequence identifier placed
+	// in a STRINGBINDING's wTowerId (C706 Appendix I table I-2).
+	rpcTowerIDTCP = 0x07
+
+	// rpcSecBindingReserved is the SECURITYBINDING Reserved field
+	// (MS-DCOM 2.2.19.4). It is present whenever wAuthnSvc is not
+	// RPC_C_AUTHN_NONE and MUST be 0xffff.
+	rpcSecBindingReserved = 0xffff
+
+	// rpcReferentID is the referent identifier of the one unique pointer in
+	// the ServerAlive2 reply. Any non-zero value will do; this is the one
+	// MIDL-generated stubs hand out first.
+	rpcReferentID = 0x00020000
 )
 
 // rpcNDR64Syntax is the NDR64 transfer syntax, 71710533-beba-4937-8319-
@@ -163,14 +208,16 @@ var rpcBindTimeFeaturePrefix = []byte{0x2c, 0x1c, 0xb7, 0x6c, 0x12, 0x98, 0x40, 
 // connection on orphan.
 const rpcBindTimeFeatureBitmask = 0x03
 
-// Per-connection limits. An authenticating bind is two or three small PDUs, so
-// cap the fragment size, the number of PDUs and the time one client may hold a
-// goroutine. Every one of these is the only thing standing between a hostile
-// peer and an unbounded allocation or an idle goroutine.
+// Per-connection limits. A real DCOM client's probe flow is an unauthenticated
+// bind, a ServerAlive2 call, an authenticated bind and an AUTH3, with room for
+// a repeat or two, so cap the fragment size, the number of PDUs and the time
+// one client may hold a goroutine. Every one of these is the only thing
+// standing between a hostile peer and an unbounded allocation or an idle
+// goroutine.
 const (
 	msrpcTimeout     = 30 * time.Second
 	msrpcMaxFrag     = 16 * 1024
-	msrpcMaxPDUs     = 8
+	msrpcMaxPDUs     = 16
 	msrpcMaxContexts = 32
 )
 
@@ -353,16 +400,20 @@ type msrpcCtxResult struct {
 // ALTER_CONTEXT body and builds the matching result list. Every offset is
 // checked against the body, the item count is capped, and a truncated list
 // ends the loop rather than the process.
-func msrpcContextResults(body []byte, bo msrpcByteOrder) []msrpcCtxResult {
+//
+// iface is the 16-byte abstract syntax UUID of the first context that was
+// accepted, which is how a REQUEST arriving later on the same connection is
+// matched to an interface. Clients that reach this listener offer a single
+// context, so one interface per association is all that is tracked.
+func msrpcContextResults(body []byte, bo msrpcByteOrder) (out []msrpcCtxResult, iface []byte) {
 	if len(body) < 12 {
-		return nil
+		return nil, nil
 	}
 	n := int(body[8])
 	if n > msrpcMaxContexts {
 		n = msrpcMaxContexts
 	}
 
-	var out []msrpcCtxResult
 	off := 12
 	for i := 0; i < n; i++ {
 		// p_cont_id(2) + n_transfer_syn(1) + reserved(1) + abstract(20).
@@ -370,6 +421,7 @@ func msrpcContextResults(body []byte, bo msrpcByteOrder) []msrpcCtxResult {
 			break
 		}
 		syntaxes := int(body[off+2])
+		abstract := body[off+4 : off+20]
 		off += 24
 		if syntaxes > msrpcMaxContexts {
 			break
@@ -403,9 +455,31 @@ func msrpcContextResults(body []byte, bo msrpcByteOrder) []msrpcCtxResult {
 			}
 		}
 		off += syntaxes * 20
+		if res.result == rpcContextAccept && iface == nil {
+			iface = abstract
+		}
 		out = append(out, res)
 	}
-	return out
+	return out, iface
+}
+
+// msrpcIsObjectExporter reports whether an abstract syntax UUID names
+// IObjectExporter. A UUID is NDR-encoded, so its first three fields follow the
+// client's data representation; both encodings are recognised rather than
+// turning a byte order quirk into a refused probe.
+func msrpcIsObjectExporter(iface []byte) bool {
+	if len(iface) != 16 {
+		return false
+	}
+	if bytes.Equal(iface, rpcObjectExporterIID) {
+		return true
+	}
+	var swapped [16]byte
+	copy(swapped[:], rpcObjectExporterIID)
+	swapped[0], swapped[1], swapped[2], swapped[3] = swapped[3], swapped[2], swapped[1], swapped[0]
+	swapped[4], swapped[5] = swapped[5], swapped[4]
+	swapped[6], swapped[7] = swapped[7], swapped[6]
+	return bytes.Equal(iface, swapped[:])
 }
 
 // msrpcIsBindTimeFeature reports whether a transfer syntax is a bind time
@@ -418,12 +492,15 @@ func msrpcIsBindTimeFeature(syn []byte, bo msrpcByteOrder) bool {
 // handleConnection runs the bind exchange for one client, handing the NTLM
 // messages to the capture adapter.
 //
-// The state machine is deliberately small. A client either binds with an
-// NTLMSSP NEGOTIATE in its verifier, in which case it is answered with the
-// CHALLENGE and its AUTHENTICATE is read out of the AUTH3 (or the
-// ALTER_CONTEXT some clients send instead), or it gets a BIND_NAK or a FAULT
-// and the connection closes. Nothing else is carried: a capture wants the
-// credential at the bind, not the call that would have followed.
+// A client that binds with an NTLMSSP NEGOTIATE in its verifier is answered
+// with the CHALLENGE and its AUTHENTICATE is read out of the AUTH3 (or the
+// ALTER_CONTEXT some clients send instead). Everything else is about getting
+// that client as far as the NEGOTIATE in the first place: a Windows DCOM
+// client that resolved a poisoned name to flamingo commonly binds without
+// authentication and pings IObjectExporter before it offers a credential, so
+// an unauthenticated bind is acked, ServerAlive2 is answered, and a call this
+// listener does not implement is faulted without hanging up. A BIND_NAK is
+// reserved for a bind there is no way to answer at all.
 func (s *msrpcServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
@@ -433,6 +510,10 @@ func (s *msrpcServer) handleConnection(conn net.Conn) {
 
 	var auth relay.AuthResult
 	negotiated, delivered := false, false
+
+	// The abstract syntax of the accepted presentation context, so a REQUEST
+	// that arrives later is only answered on the interface it belongs to.
+	var iface []byte
 
 	// Once the exchange has been handed over, the adapter is waiting on
 	// Type3Ch. Closing that channel on every path that never gets there —
@@ -453,9 +534,25 @@ func (s *msrpcServer) handleConnection(conn net.Conn) {
 
 		switch pdu.ptype {
 		case rpcPktBind, rpcPktAlterContext:
-			msg, authType, authLevel, ctxID, ok := s.bindToken(conn, pdu)
-			if !ok {
+			msg, authType, authLevel, ctxID, state := s.bindToken(conn, pdu)
+			if state == msrpcBindRefused {
 				return
+			}
+
+			results, accepted := msrpcContextResults(pdu.body(), pdu.bo)
+			if accepted != nil {
+				iface = accepted
+			}
+
+			if state == msrpcBindAnonymous {
+				// No credential in this one, but the association is
+				// perfectly usable and the client is very likely about to
+				// probe and then authenticate on it.
+				if err := s.writeBindAck(conn, pdu, results, 0, 0, 0, nil); err != nil {
+					log.Debugf("msrpc writing a bind ack to %s: %s", conn.RemoteAddr(), err)
+					return
+				}
+				continue
 			}
 
 			switch NTLMMessageType(msg) {
@@ -466,8 +563,8 @@ func (s *msrpcServer) handleConnection(conn net.Conn) {
 					msrpcWriteFault(conn, pdu, rpcStatusProtoError)
 					return
 				}
-				var pushed bool
-				auth, pushed, ok = s.negotiate(conn, pdu, msg, authType, authLevel, ctxID)
+				var pushed, ok bool
+				auth, pushed, ok = s.negotiate(conn, pdu, msg, results, authType, authLevel, ctxID)
 				// The flag follows the hand-over, not the reply: once the
 				// adapter holds the exchange it is this goroutine's job to
 				// release it however the rest of the connection goes.
@@ -478,10 +575,17 @@ func (s *msrpcServer) handleConnection(conn net.Conn) {
 
 			case NTLMTypeAuthenticate:
 				// Some clients carry the AUTHENTICATE in an ALTER_CONTEXT
-				// rather than an AUTH3.
+				// rather than an AUTH3. One that arrives before any
+				// NEGOTIATE has no challenge behind it and is nobody's
+				// credential, so the association is acked without security
+				// and the client is left free to start over.
 				if !negotiated {
-					msrpcWriteBindNak(conn, pdu, rpcRejectNotSpecified)
-					return
+					log.Debugf("msrpc bind from %s carries an AUTHENTICATE with no NEGOTIATE",
+						conn.RemoteAddr())
+					if err := s.writeBindAck(conn, pdu, results, 0, 0, 0, nil); err != nil {
+						return
+					}
+					continue
 				}
 				delivered = true
 				s.finish(conn, pdu, auth, msg)
@@ -490,9 +594,16 @@ func (s *msrpcServer) handleConnection(conn net.Conn) {
 			default:
 				log.Debugf("msrpc bind from %s carries NTLM message type %d",
 					conn.RemoteAddr(), NTLMMessageType(msg))
-				msrpcWriteBindNak(conn, pdu, rpcRejectNotSpecified)
-				return
+				if err := s.writeBindAck(conn, pdu, results, 0, 0, 0, nil); err != nil {
+					return
+				}
 			}
+
+		case rpcPktRequest:
+			// A call flamingo does not implement is faulted, not hung up
+			// on: the credential comes from a bind, and a client that is
+			// still connected can still make one.
+			s.request(conn, pdu, iface)
 
 		case rpcPktAuth3:
 			if !negotiated {
@@ -525,38 +636,80 @@ func (s *msrpcServer) handleConnection(conn net.Conn) {
 	log.Debugf("msrpc client %s sent %d PDUs without authenticating", conn.RemoteAddr(), msrpcMaxPDUs)
 }
 
+// msrpcBindState is what bindToken made of a BIND or ALTER_CONTEXT.
+type msrpcBindState int
+
+const (
+	// msrpcBindRefused: the bind cannot be answered at all. A BIND_NAK has
+	// already been written and the connection is finished.
+	msrpcBindRefused msrpcBindState = iota
+
+	// msrpcBindAnonymous: a well-formed bind carrying no authentication
+	// verifier. It gets an ordinary BIND_ACK with no security on it.
+	msrpcBindAnonymous
+
+	// msrpcBindNTLM: the verifier carries an NTLMSSP message.
+	msrpcBindNTLM
+)
+
 // bindToken pulls the NTLMSSP message out of a BIND or ALTER_CONTEXT
-// authentication verifier, refusing the bind when there is not one. The bool
-// reports whether the caller may continue; a false has already written the
-// refusal.
-func (s *msrpcServer) bindToken(conn net.Conn, pdu *msrpcPDU) (msg []byte, authType, authLevel byte, ctxID uint32, ok bool) {
+// authentication verifier and reports what the caller is holding.
+//
+// The refusals are the ones with no other answer: an auth_length that does not
+// fit its own fragment, an authentication service this listener cannot speak,
+// and verifier bytes with no NTLMSSP message anywhere in them. A bind with no
+// verifier at all is not one of them — refusing those is what used to lose
+// captures, because the DCOM client that probes before it authenticates gives
+// up at the NAK and never comes back.
+func (s *msrpcServer) bindToken(conn net.Conn, pdu *msrpcPDU) (msg []byte, authType, authLevel byte, ctxID uint32, state msrpcBindState) {
 	authType, authLevel, ctxID, data, err := pdu.verifier()
-	if err != nil {
-		// A bind with no verifier, or one whose auth_length is a lie. Either
-		// way there is no credential coming, so say so and close rather than
-		// carrying an unauthenticated association nothing would use.
+	switch {
+	case errors.Is(err, errNoVerifier):
+		return nil, 0, 0, 0, msrpcBindAnonymous
+	case err != nil:
+		// auth_length is a lie about this fragment; there is nothing to
+		// read and nothing honest to ack.
 		log.Debugf("msrpc bind from %s: %s", conn.RemoteAddr(), err)
 		msrpcWriteBindNak(conn, pdu, rpcRejectNotSpecified)
-		return nil, 0, 0, 0, false
+		return nil, 0, 0, 0, msrpcBindRefused
 	}
 	if authType != rpcAuthWinNT && authType != rpcAuthDefault {
 		log.Debugf("msrpc bind from %s asks for authentication service %d", conn.RemoteAddr(), authType)
 		msrpcWriteBindNak(conn, pdu, rpcRejectAuthTypeUnrec)
-		return nil, 0, 0, 0, false
+		return nil, 0, 0, 0, msrpcBindRefused
 	}
 	if msg = FindNTLMSSP(data); msg == nil {
 		log.Debugf("msrpc bind verifier from %s is not NTLMSSP", conn.RemoteAddr())
 		msrpcWriteBindNak(conn, pdu, rpcRejectAuthTypeUnrec)
-		return nil, 0, 0, 0, false
+		return nil, 0, 0, 0, msrpcBindRefused
 	}
-	return msg, rpcAuthWinNT, authLevel, ctxID, true
+	return msg, rpcAuthWinNT, authLevel, ctxID, msrpcBindNTLM
+}
+
+// writeBindAck answers a BIND with a BIND_ACK or an ALTER_CONTEXT with an
+// ALTER_CONTEXT_RESP, carrying challenge in the authentication verifier when
+// there is one and no verifier at all when challenge is empty.
+func (s *msrpcServer) writeBindAck(conn net.Conn, pdu *msrpcPDU, results []msrpcCtxResult,
+	authType, authLevel byte, ctxID uint32, challenge []byte) error {
+
+	respType := byte(rpcPktBindAck)
+	secAddr := s.secondaryAddr
+	if pdu.ptype == rpcPktAlterContext {
+		// An ALTER_CONTEXT_RESP carries an empty secondary address.
+		respType = rpcPktAlterContextR
+		secAddr = ""
+	}
+	_, err := conn.Write(msrpcBindAck(pdu, respType, secAddr, results, authType, authLevel, ctxID, challenge))
+	return err
 }
 
 // negotiate hands the NEGOTIATE to the capture adapter and answers the client
 // with the CHALLENGE it supplies, in a BIND_ACK or an ALTER_CONTEXT_RESP to
 // match what was asked. pushed reports whether the adapter took the exchange,
 // which is what makes the caller responsible for releasing it.
-func (s *msrpcServer) negotiate(conn net.Conn, pdu *msrpcPDU, type1 []byte, authType, authLevel byte, ctxID uint32) (auth relay.AuthResult, pushed, ok bool) {
+func (s *msrpcServer) negotiate(conn net.Conn, pdu *msrpcPDU, type1 []byte, results []msrpcCtxResult,
+	authType, authLevel byte, ctxID uint32) (auth relay.AuthResult, pushed, ok bool) {
+
 	auth = relay.AuthResult{
 		NTLMType1:  type1,
 		SourceAddr: conn.RemoteAddr().String(),
@@ -584,19 +737,42 @@ func (s *msrpcServer) negotiate(conn net.Conn, pdu *msrpcPDU, type1 []byte, auth
 		return auth, true, false
 	}
 
-	results := msrpcContextResults(pdu.body(), pdu.bo)
-	secAddr := s.secondaryAddr
-	respType := byte(rpcPktBindAck)
-	if pdu.ptype == rpcPktAlterContext {
-		// An ALTER_CONTEXT_RESP carries an empty secondary address.
-		respType = rpcPktAlterContextR
-		secAddr = ""
-	}
-	if _, err := conn.Write(msrpcBindAck(pdu, respType, secAddr, results, authType, authLevel, ctxID, challenge)); err != nil {
+	if err := s.writeBindAck(conn, pdu, results, authType, authLevel, ctxID, challenge); err != nil {
 		log.Debugf("msrpc writing a bind ack to %s: %s", conn.RemoteAddr(), err)
 		return auth, true, false
 	}
 	return auth, true, true
+}
+
+// request answers a REQUEST PDU. IObjectExporter::ServerAlive2 is the one call
+// this listener implements, because it is the one a DCOM client makes before
+// it authenticates; everything else is faulted with nca_s_op_rng_error and the
+// connection is left open, so a probe flamingo does not carry is not a reason
+// for the client to go away.
+func (s *msrpcServer) request(conn net.Conn, pdu *msrpcPDU, iface []byte) {
+	body := pdu.body()
+	// alloc_hint(4) + p_cont_id(2) + opnum(2).
+	if len(body) < 8 {
+		log.Debugf("msrpc REQUEST from %s has a %d byte body", conn.RemoteAddr(), len(body))
+		msrpcWriteFault(conn, pdu, rpcStatusProtoError)
+		return
+	}
+	ctxID := pdu.bo.Uint16(body[4:6])
+	opnum := pdu.bo.Uint16(body[6:8])
+
+	if iface == nil {
+		log.Debugf("msrpc REQUEST from %s before any accepted bind", conn.RemoteAddr())
+		msrpcWriteFault(conn, pdu, rpcStatusProtoError)
+		return
+	}
+	if opnum != rpcOpnumServerAlive2 || !msrpcIsObjectExporter(iface) {
+		log.Debugf("msrpc REQUEST from %s for opnum %d on %x", conn.RemoteAddr(), opnum, iface)
+		msrpcWriteFault(conn, pdu, rpcStatusOpRngError)
+		return
+	}
+	if _, err := conn.Write(msrpcServerAlive2(pdu, ctxID)); err != nil {
+		log.Debugf("msrpc writing a ServerAlive2 response to %s: %s", conn.RemoteAddr(), err)
+	}
 }
 
 // finish hands the AUTHENTICATE to the adapter and reports the outcome to the
@@ -633,7 +809,9 @@ func msrpcHeader(pdu *msrpcPDU, ptype byte, flags byte, fragLen, authLen int) []
 }
 
 // msrpcBindAck builds a BIND_ACK or ALTER_CONTEXT_RESP, carrying the NTLMSSP
-// CHALLENGE in its authentication verifier.
+// CHALLENGE in its authentication verifier. An empty challenge produces an
+// ordinary acknowledgement with auth_length 0 and no sec_trailer, which is
+// what an unauthenticated bind gets.
 func msrpcBindAck(pdu *msrpcPDU, ptype byte, secAddr string, results []msrpcCtxResult,
 	authType, authLevel byte, ctxID uint32, challenge []byte) []byte {
 
@@ -663,6 +841,11 @@ func msrpcBindAck(pdu *msrpcPDU, ptype byte, secAddr string, results []msrpcCtxR
 		body = append(body, r.syntax[:]...)
 	}
 
+	if len(challenge) == 0 {
+		out := msrpcHeader(pdu, ptype, rpcFlagFirstFrag|rpcFlagLastFrag, 16+len(body), 0)
+		return append(out, body...)
+	}
+
 	// The verifier is four-byte aligned, and the pad is declared in the
 	// trailer so the client knows where the body really ended.
 	pad := (4 - len(body)%4) % 4
@@ -686,6 +869,69 @@ func msrpcWriteBindNak(conn net.Conn, pdu *msrpcPDU, reason uint16) {
 	body = append(body, 1, 5, 0) // one protocol version: 5.0
 	out := msrpcHeader(pdu, rpcPktBindNak, rpcFlagFirstFrag|rpcFlagLastFrag, 16+len(body), 0)
 	conn.Write(append(out, body...))
+}
+
+// msrpcServerAlive2 builds the RESPONSE to IObjectExporter::ServerAlive2.
+func msrpcServerAlive2(pdu *msrpcPDU, ctxID uint16) []byte {
+	stub := msrpcServerAlive2Stub(pdu.bo, NTLMConf.NetBIOSComputerName)
+
+	// RESPONSE body: alloc_hint(4) + p_cont_id(2) + cancel_count(1) +
+	// reserved(1), then the stub (C706 12.6.4.10).
+	body := make([]byte, 0, 8+len(stub))
+	body = pdu.bo.AppendUint32(body, uint32(len(stub)))
+	body = pdu.bo.AppendUint16(body, ctxID)
+	body = append(body, 0, 0)
+	body = append(body, stub...)
+
+	out := msrpcHeader(pdu, rpcPktResponse, rpcFlagFirstFrag|rpcFlagLastFrag, 16+len(body), 0)
+	return append(out, body...)
+}
+
+// msrpcServerAlive2Stub marshals the three output parameters of ServerAlive2
+// in NDR, in the client's byte order:
+//
+//	[out, ref] COMVERSION* pComVersion
+//	[out, ref] DUALSTRINGARRAY** ppdsaOrBindings
+//	[out, ref] DWORD* pReserved
+//
+// then the error_status_t return value. The ref pointers themselves are not
+// marshalled; the inner DUALSTRINGARRAY pointer is unique, so it is a referent
+// id followed by the conformant array's max_count and the structure itself
+// (MS-DCOM 2.2.19.2). The DUALSTRINGARRAY holds one STRINGBINDING naming this
+// host over ncacn_ip_tcp with no endpoint, which is what ServerAlive2 bindings
+// are required to look like, and one SECURITYBINDING naming NTLMSSP with an
+// empty principal name. Each section is terminated by a zero entry
+// (MS-DCOM 2.2.19.1).
+//
+// The address advertised is the NTLM identity flamingo already presents rather
+// than a literal address: it is the name the CHALLENGE carries, and with the
+// poisoners running it resolves straight back here.
+func msrpcServerAlive2Stub(bo msrpcByteOrder, name string) []byte {
+	arr := make([]uint16, 0, 8+len(name))
+	arr = append(arr, rpcTowerIDTCP)
+	arr = append(arr, utf16.Encode([]rune(name))...)
+	arr = append(arr, 0) // aNetworkAddr terminator
+	arr = append(arr, 0) // nullterm1: end of the STRINGBINDING entries
+
+	secOffset := len(arr)
+	arr = append(arr, rpcAuthWinNT, rpcSecBindingReserved, 0) // wAuthnSvc, Reserved, empty aPrincName
+	arr = append(arr, 0)                                      // nullterm2: end of the SECURITYBINDING entries
+
+	out := make([]byte, 0, 24+2*len(arr))
+	out = bo.AppendUint16(out, rpcComVersionMajor)
+	out = bo.AppendUint16(out, rpcComVersionMinor)
+	out = bo.AppendUint32(out, rpcReferentID)     // ppdsaOrBindings referent
+	out = bo.AppendUint32(out, uint32(len(arr)))  // conformant max_count
+	out = bo.AppendUint16(out, uint16(len(arr)))  // wNumEntries
+	out = bo.AppendUint16(out, uint16(secOffset)) // wSecurityOffset
+	for _, v := range arr {
+		out = bo.AppendUint16(out, v)
+	}
+	for len(out)%4 != 0 {
+		out = append(out, 0) // align pReserved, which is four bytes wide
+	}
+	out = bo.AppendUint32(out, 0) // pReserved: MUST be zero
+	return bo.AppendUint32(out, 0)
 }
 
 // msrpcWriteFault refuses anything that is not a bind, and reports a refused
