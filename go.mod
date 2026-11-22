@@ -32,7 +32,10 @@ require (
 	github.com/jcmturner/goidentity/v6 v6.0.1 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
-	github.com/oiweiwei/go-msrpc v1.6.7 // indirect
+	// Pinned: gopacket's dcerpc package calls the pre-v1.3.0 Kerberos
+	// Authentifier API (WrapOutboundPayload/UnwrapInboundPayload taking
+	// [][]byte payloads). v1.3.0+ changed those signatures and breaks the build.
+	github.com/oiweiwei/go-msrpc v1.2.18 // indirect
 	github.com/oiweiwei/gokrb5.fork/v9 v9.0.8 // indirect
 	github.com/spf13/pflag v1.1.0 // indirect
 	github.com/weppos/publicsuffix-go v0.50.3 // indirect
