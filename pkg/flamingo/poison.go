@@ -277,9 +277,12 @@ func splitList(spec string) []string {
 	return out
 }
 
-// ScopePolicy constrains which poisoner queries are answered so an operator can
-// stay inside an authorized engagement scope. A zero-value policy answers every
-// query. All name comparisons are case-insensitive.
+// ScopePolicy constrains which queries are poisoned so an operator can stay
+// inside an authorized engagement scope. It governs the broadcast and
+// multicast path only -- see poisonDecide -- because answering a query
+// addressed to this host is ordinary listener behaviour rather than poisoning.
+// A zero-value policy poisons every query. All name comparisons are
+// case-insensitive.
 type ScopePolicy struct {
 	// RespondTo, when non-empty, is an allowlist of querier source addresses;
 	// a querier whose address matches nothing here is never answered.
@@ -292,8 +295,10 @@ type ScopePolicy struct {
 	DontRespondToName []string
 	// DontRespondToTLD is a denylist of queried-name suffixes (e.g. _dosvc).
 	DontRespondToTLD []string
-	// Analyze turns the poisoner into a pure observer: queries are still
-	// parsed, filtered, and logged, but no answer is ever sent.
+	// Analyze turns off poisoning while leaving the listener running:
+	// broadcast and multicast queries are parsed, filtered and logged but
+	// never answered. Queries addressed to this host are still answered,
+	// since replying to those is not poisoning.
 	Analyze bool
 }
 
@@ -349,6 +354,30 @@ func DefaultScopePolicy() *ScopePolicy {
 // "no scope has been authorized" rather than "anything goes". The NewConf
 // constructors install DefaultScopePolicy, so this only bites a caller that
 // clears the field deliberately.
+// poisonDecide applies the rule that separates answering from poisoning.
+//
+// Answering a query sent straight to this host is not poisoning. It is a host
+// replying to something addressed to it, exactly as the SMB or HTTP listener
+// replies to a connection, and it happens by default and unconditionally.
+// Poisoning is asserting this name to the whole segment: claiming a name
+// nobody asked this host about, to hosts that were not talking to it. That is
+// the active half, so it is the half gated behind AnswerBroadcast
+// (--poison-broadcast) and the half the scope policy governs -- an operator
+// scoping a run, or watching with --poison-analyze, is scoping what flamingo
+// asserts to the segment, not whether it answers traffic aimed at it.
+//
+// The datagram's destination decides which case applies, and a destination
+// that cannot be determined counts as broadcast.
+func poisonDecide(policy *ScopePolicy, answerBroadcast bool, src net.Addr, name string, dst net.IP) (respond bool, reason string) {
+	if poisonIsDirected(dst) {
+		return true, ""
+	}
+	if !answerBroadcast {
+		return false, poisonBroadcastReason
+	}
+	return policy.ShouldRespond(srcIP(src), name)
+}
+
 func (p *ScopePolicy) ShouldRespond(srcIP net.IP, name string) (bool, string) {
 	if p == nil {
 		return false, "no scope policy configured"

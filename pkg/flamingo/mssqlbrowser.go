@@ -256,23 +256,7 @@ func (c *ConfMSSQLBrowser) handle(data []byte, src net.Addr, ifIndex int, dst ne
 		return nil
 	}
 
-	// Scope first, reach second -- the same order as the name poisoners. The
-	// scope controls mean what they say regardless of how the request
-	// arrived: --poison-analyze answers nothing at all, and a host excluded
-	// with --poison-dont-respond-to is not answered just because it addressed
-	// this listener directly. SSRP's CLNT_UCAST_EX and CLNT_UCAST_INST are
-	// unicast by definition, so consulting the policy only for broadcast
-	// would have exempted the common case from scoping entirely.
-	respond, reason := c.Policy.ShouldRespond(srcIP(src), instance)
-
-	// Answering a broadcast discovery request advertises a SQL Server that
-	// does not exist to every host on the segment, which is the active,
-	// opt-in half; a request directed at this host is answered like any other
-	// flamingo listener would.
-	if respond && !poisonIsDirected(dst) && !c.AnswerBroadcast {
-		respond = false
-		reason = poisonBroadcastReason
-	}
+	respond, reason := poisonDecide(c.Policy, c.AnswerBroadcast, src, instance, dst)
 
 	var resp []byte
 	var advertised string

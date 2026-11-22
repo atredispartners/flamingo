@@ -136,6 +136,14 @@ func (c *ConfHTTP) Shutdown() {
 		// teardown take the full timeout. Records are written before the
 		// response, so nothing captured is lost by cutting a response short.
 		c.server.Close()
+		// server.Close can only close listeners the server has already been
+		// handed. SpawnHTTP binds the socket and then calls Serve from a
+		// goroutine, so a Shutdown landing in between closes nothing and
+		// leaves the port bound and still accepting connections after
+		// Shutdown has returned. Close the listener this config owns.
+		if c.listener != nil {
+			c.listener.Close()
+		}
 	}
 }
 

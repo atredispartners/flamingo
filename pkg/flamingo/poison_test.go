@@ -257,3 +257,51 @@ func TestPoisonIsDirected(t *testing.T) {
 		t.Errorf("own address %s not treated as directed", ip)
 	}
 }
+
+// TestPoisonDecideSeparatesAnsweringFromPoisoning pins the line between the
+// two halves for every responder that routes through poisonDecide: LLMNR,
+// NBT-NS, mDNS and the SQL Server Browser.
+//
+// Answering a query addressed to this host is not poisoning -- it is a host
+// replying to traffic aimed at it, like any other listener -- so it happens
+// unconditionally, whatever the scope policy says. Poisoning is asserting a
+// name to the segment, and that is what --poison-broadcast gates and what the
+// scope policy and --poison-analyze govern.
+func TestPoisonDecideSeparatesAnsweringFromPoisoning(t *testing.T) {
+	directed := poisonTestDirectedDst(t)
+	multicast := net.ParseIP("224.0.0.252")
+	src := &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}
+
+	denyAll := mustPolicy(t, "", "10.0.0.9", "", "", "", false)
+	analyze := mustPolicy(t, "", "", "", "", "", true)
+	inScope := mustPolicy(t, "10.0.0.0/24", "", "", "", "", false)
+
+	cases := []struct {
+		name            string
+		policy          *ScopePolicy
+		answerBroadcast bool
+		dst             net.IP
+		want            bool
+	}{
+		{"directed is answered despite an excluded source", denyAll, false, directed, true},
+		{"directed is answered in analyze mode", analyze, false, directed, true},
+		{"directed is answered with no policy at all", nil, false, directed, true},
+		{"multicast needs the broadcast flag", inScope, false, multicast, false},
+		{"multicast in scope with the flag is answered", inScope, true, multicast, true},
+		{"multicast out of scope is refused", denyAll, true, multicast, false},
+		{"multicast in analyze mode is refused", analyze, true, multicast, false},
+		// A destination the platform could not report counts as broadcast,
+		// so an unknown case fails toward the quieter behaviour.
+		{"unknown destination counts as broadcast", inScope, false, nil, false},
+	}
+
+	for _, c := range cases {
+		got, reason := poisonDecide(c.policy, c.answerBroadcast, src, "wpad", c.dst)
+		if got != c.want {
+			t.Errorf("%s: respond = %v (reason %q), want %v", c.name, got, reason, c.want)
+		}
+		if !got && reason == "" {
+			t.Errorf("%s: refused without a reason", c.name)
+		}
+	}
+}

@@ -84,8 +84,10 @@ func (c *ConfLLMNR) Shutdown() {
 // default -- it logs every query it sees and answers those sent directly to
 // this host, like any other listener. Answering a query multicast to the
 // segment reaches hosts that were never talking to flamingo, so that half
-// needs AnswerBroadcast (--poison-broadcast). The ScopePolicy and analyze mode
-// narrow answers further, inside an authorized engagement scope.
+// needs AnswerBroadcast (--poison-broadcast), and the ScopePolicy and analyze
+// mode narrow that half further, inside an authorized engagement scope. None
+// of them gate the directed case: replying to a query aimed at this host is
+// not poisoning.
 func SpawnLLMNR(c *ConfLLMNR) error {
 	v4host, v6host := poisonBindHosts(c.BindHost)
 
@@ -202,15 +204,7 @@ func (c *ConfLLMNR) handle(data []byte, src net.Addr, ifIndex int, dst net.IP) [
 	}
 	qname := string(name)
 
-	respond, reason := c.Policy.ShouldRespond(srcIP(src), qname)
-
-	// Answering a query shouted at a multicast group or broadcast address is
-	// the active, opt-in half of poisoning; a query directed at this host is
-	// answered like any other flamingo listener would.
-	if respond && !poisonIsDirected(dst) && !c.AnswerBroadcast {
-		respond = false
-		reason = poisonBroadcastReason
-	}
+	respond, reason := poisonDecide(c.Policy, c.AnswerBroadcast, src, qname, dst)
 
 	var spoof net.IP
 	if respond {

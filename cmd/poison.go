@@ -42,23 +42,26 @@ func init() {
 	rootCmd.Flags().StringVarP(&poisonParams.NBTNSPorts, "nbtns-ports", "", "137", "The list of UDP ports to listen on for NBT-NS. Broadcast answering needs --poison-broadcast")
 	rootCmd.Flags().StringVarP(&poisonParams.MDNSPorts, "mdns-ports", "", "5353", "The list of UDP ports to listen on for mDNS. Broadcast answering needs --poison-broadcast")
 
-	// Advertised (spoofed) addresses. When unset, the address of the interface
-	// the query arrived on is used; if none can be determined, nothing is
-	// answered (the query is still observed and logged).
+	// Advertised (spoofed) addresses. When unset, resolution falls back
+	// through the arrival interface, the route toward the querier, and any
+	// routable local address, so a poisoner answers with this host's own
+	// address rather than giving up.
 	rootCmd.Flags().StringVarP(&poisonParams.SpoofIPv4, "poison-spoof-ip", "", "", "The IPv4 address to answer poisoned queries with (default: this host's own address on the arrival interface)")
 	rootCmd.Flags().StringVarP(&poisonParams.SpoofIPv6, "poison-spoof-ip6", "", "", "The IPv6 address to answer poisoned queries with (default: this host's own address on the arrival interface)")
 	rootCmd.Flags().StringVarP(&poisonParams.AnswerName, "poison-answer-name", "", "", "Optional LLMNR answer-record name, overriding the queried name")
 	rootCmd.Flags().IntVarP(&poisonParams.TTL, "poison-ttl", "", -1, "Override the answer TTL (seconds) for all poisoners; -1 keeps per-protocol defaults")
 
-	// Scoping policy. These exist so an operator can keep answers inside an
-	// authorized engagement scope; --poison-analyze observes and logs without
-	// answering anything.
-	rootCmd.Flags().StringVarP(&poisonParams.RespondTo, "poison-respond-to", "", "", "Only answer queries from these source addresses (comma list of IP, CIDR, or range)")
-	rootCmd.Flags().StringVarP(&poisonParams.DontRespondTo, "poison-dont-respond-to", "", "", "Never answer queries from these source addresses (comma list of IP, CIDR, or range)")
-	rootCmd.Flags().StringVarP(&poisonParams.RespondToName, "poison-respond-to-name", "", "", "Only answer queries for these names (comma list, case-insensitive)")
-	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToName, "poison-dont-respond-to-name", "", flamingo.DefaultDontRespondToName, "Never answer queries for these names (comma list, case-insensitive)")
-	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToTLD, "poison-dont-respond-to-tld", "", flamingo.DefaultDontRespondToTLD, "Never answer queries whose name ends with these suffixes (comma list)")
-	rootCmd.Flags().BoolVarP(&poisonParams.Analyze, "poison-analyze", "", false, "Analyze mode: observe and log poisoner queries but answer nothing")
+	// Scoping policy. These keep poisoning inside an authorized engagement
+	// scope, so they govern the broadcast and multicast answers -- the ones
+	// that assert a name to hosts which never asked this host anything.
+	// Answering a query addressed to this host is ordinary listener
+	// behaviour, not poisoning, and is not scoped here.
+	rootCmd.Flags().StringVarP(&poisonParams.RespondTo, "poison-respond-to", "", "", "Only poison broadcast queries from these source addresses (comma list of IP, CIDR, or range)")
+	rootCmd.Flags().StringVarP(&poisonParams.DontRespondTo, "poison-dont-respond-to", "", "", "Never poison broadcast queries from these source addresses (comma list of IP, CIDR, or range)")
+	rootCmd.Flags().StringVarP(&poisonParams.RespondToName, "poison-respond-to-name", "", "", "Only poison broadcast queries for these names (comma list, case-insensitive)")
+	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToName, "poison-dont-respond-to-name", "", flamingo.DefaultDontRespondToName, "Never poison broadcast queries for these names (comma list, case-insensitive)")
+	rootCmd.Flags().StringVarP(&poisonParams.DontRespondToTLD, "poison-dont-respond-to-tld", "", flamingo.DefaultDontRespondToTLD, "Never poison broadcast queries whose name ends with these suffixes (comma list)")
+	rootCmd.Flags().BoolVarP(&poisonParams.Analyze, "poison-analyze", "", false, "Analyze mode: observe and log broadcast name queries without poisoning them. Queries addressed directly to this host are still answered")
 	rootCmd.Flags().BoolVarP(&poisonParams.AnswerBroadcast, "poison-broadcast", "", false, "Answer multicast and broadcast name queries (LLMNR, NBT-NS, mDNS poisoning). Off by default: without it these listeners only answer queries sent directly to this host. Authorized engagements only")
 }
 

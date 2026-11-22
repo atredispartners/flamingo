@@ -167,11 +167,15 @@ func TestLLMNRAnalyzeModeRecordsButDoesNotAnswer(t *testing.T) {
 
 	conf := NewConfLLMNR()
 	conf.RecordWriter = rw
-	conf.SpoofIPv4 = "1.2.3.4" // even with a spoof address, analyze answers nothing
+	conf.SpoofIPv4 = "1.2.3.4"  // even with a spoof address, analyze poisons nothing
+	conf.AnswerBroadcast = true // isolate analyze from the broadcast gate
 	conf.Policy = mustPolicy(t, "", "", "", "", "", true)
 
-	if resp := conf.handle(llmnrQueryWPAD, &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}, 0, poisonTestDirectedDst(t)); resp != nil {
-		t.Errorf("analyze mode must not answer")
+	querier := &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 5355}
+
+	// Analyze mode governs poisoning: claiming this name to the segment.
+	if resp := conf.handle(llmnrQueryWPAD, querier, 0, net.ParseIP("224.0.0.252")); resp != nil {
+		t.Errorf("analyze mode must not answer a query sent to the LLMNR group")
 	}
 	select {
 	case rec := <-got:
@@ -180,6 +184,13 @@ func TestLLMNRAnalyzeModeRecordsButDoesNotAnswer(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected an observed-query record in analyze mode")
+	}
+
+	// A query addressed to this host is still answered. Replying to traffic
+	// aimed at this listener is not poisoning, so analyze mode does not stop
+	// it any more than it stops the SMB listener accepting a connection.
+	if resp := conf.handle(llmnrQueryWPAD, querier, 0, poisonTestDirectedDst(t)); resp == nil {
+		t.Errorf("analyze mode suppressed a directed query, which is not poisoning")
 	}
 }
 

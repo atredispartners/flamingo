@@ -294,26 +294,22 @@ func TestMSSQLBrowserBroadcastRespectsScope(t *testing.T) {
 	if resp := conf.handle([]byte{0x02}, outOfScope, 0, broadcast); resp != nil {
 		t.Error("out-of-scope broadcast query was answered")
 	}
-	// The scope policy applies to directed requests too. SSRP's CLNT_UCAST_EX
-	// and CLNT_UCAST_INST are unicast by definition, so scoping only the
-	// broadcast case would exempt the common case entirely: a host the
-	// operator excluded from the engagement would still be answered as long
-	// as it addressed this listener directly. The name poisoners consult the
-	// policy for every query and so does this one.
+	// A request addressed to this host is answered whatever the scope policy
+	// says. Replying to traffic aimed at this listener is not poisoning, so
+	// the poisoning scope controls do not govern it -- they govern what
+	// flamingo asserts to the segment.
 	if ip := anyUsableIP(false); ip != nil {
-		if resp := conf.handle([]byte{0x02}, outOfScope, 0, ip); resp != nil {
-			t.Error("out-of-scope directed query was answered")
-		}
-		if resp := conf.handle([]byte{0x02}, inScope, 0, ip); resp == nil {
-			t.Error("in-scope directed query was not answered")
+		if resp := conf.handle([]byte{0x02}, outOfScope, 0, ip); resp == nil {
+			t.Error("directed query was refused by the broadcast scope policy")
 		}
 	}
 }
 
-// TestMSSQLBrowserAnalyzeAnswersNothing pins the documented meaning of
-// --poison-analyze ("observe and log poisoner queries but answer nothing") on
-// the SQL Browser responder, for directed requests as well as broadcast ones.
-func TestMSSQLBrowserAnalyzeAnswersNothing(t *testing.T) {
+// TestMSSQLBrowserAnalyzeStopsBroadcastOnly checks that --poison-analyze stops
+// flamingo asserting a SQL Server to the segment while leaving it answering
+// requests addressed to it, which is ordinary listener behaviour rather than
+// poisoning.
+func TestMSSQLBrowserAnalyzeStopsBroadcastOnly(t *testing.T) {
 	broadcast := net.ParseIP("255.255.255.255")
 	querier := &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 1434}
 
@@ -330,8 +326,8 @@ func TestMSSQLBrowserAnalyzeAnswersNothing(t *testing.T) {
 		t.Error("analyze mode answered a broadcast query")
 	}
 	if ip := anyUsableIP(false); ip != nil {
-		if resp := conf.handle([]byte{0x02}, querier, 0, ip); resp != nil {
-			t.Error("analyze mode answered a directed query")
+		if resp := conf.handle([]byte{0x02}, querier, 0, ip); resp == nil {
+			t.Error("analyze mode suppressed a directed query, which is not poisoning")
 		}
 	}
 }

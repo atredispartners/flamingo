@@ -70,19 +70,22 @@ $ flamingo --poison-broadcast
 ```
 
 Only use it on networks you are authorized to test. Queries are logged either way, so
-you can see what a poisoning run would have caught before enabling it; `--poison-analyze`
-goes further and answers nothing at all, not even directed queries.
+you can see what a poisoning run would have caught before enabling it, and
+`--poison-analyze` keeps the listeners observing without poisoning anything.
 
-Scope controls apply to both modes, and are worth setting on any real engagement:
+The scope controls govern poisoning — the broadcast and multicast answers. They do not
+restrict replies to queries addressed to this host, because answering those is not
+poisoning: it is this host replying to traffic aimed at it, exactly as the SMB or HTTP
+listener replies to a connection. Worth setting on any real engagement:
 
 | Option | Effect |
 |--------|--------|
-| `--poison-respond-to` | Only answer queriers at these addresses (IP, CIDR, or range) |
-| `--poison-dont-respond-to` | Never answer queriers at these addresses |
-| `--poison-respond-to-name` | Only answer these queried names |
-| `--poison-dont-respond-to-name` | Never answer these queried names (default `ISATAP`) |
-| `--poison-dont-respond-to-tld` | Never answer names with these suffixes (default `_dosvc`) |
-| `--poison-analyze` | Observe and log every query, answer nothing |
+| `--poison-respond-to` | Only poison broadcast queries from these addresses (IP, CIDR, or range) |
+| `--poison-dont-respond-to` | Never poison broadcast queries from these addresses |
+| `--poison-respond-to-name` | Only poison these queried names |
+| `--poison-dont-respond-to-name` | Never poison these queried names (default `ISATAP`) |
+| `--poison-dont-respond-to-tld` | Never poison names with these suffixes (default `_dosvc`) |
+| `--poison-analyze` | Observe and log broadcast queries without poisoning them |
 | `--poison-spoof-ip`, `--poison-spoof-ip6` | Answer with this address instead of our own |
 | `--poison-ttl` | Override the answer TTL, which defenders fingerprint |
 
