@@ -4,5 +4,7 @@
 dist/
 
 
-# Agent worktrees and local session state
-.claude/worktrees/
+# Agent worktrees and local session state. The whole directory is local to
+# whoever is working here -- editor and agent settings, scratch worktrees --
+# so none of it belongs in the repository.
+.claude/
