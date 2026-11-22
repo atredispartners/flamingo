@@ -32,7 +32,7 @@ Pull requests are encouraged for additional protocols and output destinations.
 | RDP | 3389/tcp | `--rdp-ports` | CredSSP NTLM challenge/response (hashcat mode 5600) and cleartext Client Info passwords from TLS-only clients |
 | SMB | 445/tcp, 139/tcp | `--smb-ports` | NTLMv2 (hashcat mode 5600) and NTLMv1 (hashcat mode 5500) from SMB1, SMB2 and SMB3 session setup |
 | Kerberos | 88/tcp, 88/udp | `--kerberos-ports`, `--kerberos-force-ntlm` | AS-REQ pre-authentication timestamps (hashcat modes 7500, 19800, 19900) |
-| MSRPC | 135/tcp | `--msrpc-ports` | NTLM from DCE/RPC bind authentication (hashcat mode 5600) |
+| MSRPC | 135/tcp | `--msrpc-ports` | NTLM from DCE/RPC bind authentication (hashcat mode 5600); answers `IObjectExporter::ServerAlive2` so a DCOM client that pings first goes on to authenticate |
 | WinRM | 5985/tcp, 5986/tcp | `--winrm-ports`, `--winrms-ports` | NTLM over WS-Management on `/wsman` (hashcat mode 5600) |
 | ADWS | 9389/tcp | `--adws-ports` | NTLM from Active Directory Web Services (hashcat mode 5600) |
 | SQL Browser | 1434/udp | `--mssql-browser-ports` | Instance discovery requests; answers point clients at the MSSQL listener |
