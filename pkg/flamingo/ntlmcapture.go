@@ -221,6 +221,17 @@ func (c *NTLMCapture) Stop() error {
 // hold up the rest, and keeps draining for a grace window after a stop.
 func (c *NTLMCapture) loop(results chan relay.AuthResult, done chan struct{}) {
 	for {
+		// Stopping wins over a victim that is already queued. select picks at
+		// random among ready cases, so without this check a victim waiting in
+		// results when Stop closes done would be answered with a challenge
+		// about half the time instead of being released.
+		select {
+		case <-done:
+			c.drain(results)
+			return
+		default:
+		}
+
 		select {
 		case a := <-results:
 			go c.exchange(a, done)
@@ -251,6 +262,18 @@ func (c *NTLMCapture) drain(results chan relay.AuthResult) {
 // exchange runs one victim's rendezvous: answer the NEGOTIATE with a
 // CHALLENGE, record the AUTHENTICATE, report the outcome.
 func (c *NTLMCapture) exchange(a relay.AuthResult, done chan struct{}) {
+	// A victim handed over at the moment of a stop is released, not answered.
+	// The loop prefers the stop case, but the two can still be noticed in the
+	// same instant, and a listener that has been stopped should not be issuing
+	// challenges: by this point the record writer may already be closed, so
+	// anything captured here would be dropped anyway.
+	select {
+	case <-done:
+		c.abort(a)
+		return
+	default:
+	}
+
 	answered, reported := false, false
 	defer func() {
 		if !answered {
