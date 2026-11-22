@@ -110,7 +110,7 @@ func init() {
 
 	// DNS parameters
 	rootCmd.Flags().StringVarP(&params.DNSPorts, "dns-ports", "", "53,5353", "The list of UDP ports to listen on for DNS")
-	rootCmd.Flags().StringVarP(&params.DNSResolveToIP, "dns-resolve-to", "", "", "The IP address used to respond to DNS Type A question. If empty, no response will be sent")
+	rootCmd.Flags().StringVarP(&params.DNSResolveToIP, "dns-resolve-to", "", "", "The address(es) to answer DNS queries with, comma-separated for both families (e.g. 10.0.0.1,fd00::1). If empty, queries are logged but not answered")
 
 	// FTP parameters
 	rootCmd.Flags().StringVarP(&params.FTPPorts, "ftp-ports", "", "21", "The list of TCP ports to listen on for FTP")

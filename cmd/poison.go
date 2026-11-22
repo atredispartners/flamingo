@@ -34,9 +34,9 @@ func init() {
 	// connect to flamingo, so they are opt-in and OFF by default. Enable them
 	// explicitly and only inside an authorized engagement scope, e.g.
 	//   flamingo --protocols llmnr,nbtns,mdns,smb
-	rootCmd.Flags().StringVarP(&poisonParams.LLMNRPorts, "llmnr-ports", "", "5355", "The list of UDP ports to listen on for LLMNR poisoning (opt-in)")
-	rootCmd.Flags().StringVarP(&poisonParams.NBTNSPorts, "nbtns-ports", "", "137", "The list of UDP ports to listen on for NBT-NS poisoning (opt-in)")
-	rootCmd.Flags().StringVarP(&poisonParams.MDNSPorts, "mdns-ports", "", "5353", "The list of UDP ports to listen on for mDNS poisoning (opt-in)")
+	rootCmd.Flags().StringVarP(&poisonParams.LLMNRPorts, "llmnr-ports", "", "5355", "The list of UDP ports to listen on for LLMNR. Broadcast answering needs --poison-broadcast")
+	rootCmd.Flags().StringVarP(&poisonParams.NBTNSPorts, "nbtns-ports", "", "137", "The list of UDP ports to listen on for NBT-NS. Broadcast answering needs --poison-broadcast")
+	rootCmd.Flags().StringVarP(&poisonParams.MDNSPorts, "mdns-ports", "", "5353", "The list of UDP ports to listen on for mDNS. Broadcast answering needs --poison-broadcast")
 
 	// Advertised (spoofed) addresses. When unset, the address of the interface
 	// the query arrived on is used; if none can be determined, nothing is

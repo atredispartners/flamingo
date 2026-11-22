@@ -11,7 +11,7 @@ Pull requests are encouraged for additional protocols and output destinations.
 | Protocol | Default ports | Options | Captures |
 |----------|---------------|---------|----------|
 | SSH | 22/tcp | `--ssh-ports`, `--ssh-host-key` | Passwords and public keys |
-| HTTP/HTTPS | 80/tcp, 443/tcp | `--http-ports`, `--https-ports`, `--http-auth-mode`, `--http-realm` | Basic credentials or NTLM challenge/response |
+| HTTP/HTTPS | 80/tcp, 443/tcp | `--http-ports`, `--https-ports`, `--http-auth-mode`, `--http-realm`, `--http-wpad` | Basic credentials or NTLM challenge/response (hashcat mode 5600); optionally serves a WPAD file |
 | LDAP/LDAPS | 389/tcp, 636/tcp | `--ldap-ports`, `--ldaps-ports` | Simple bind credentials, SASL PLAIN, SASL DIGEST-MD5, and NTLM/GSS-SPNEGO binds (hashcat mode 5600) |
 | DNS | 53/udp, 5353/udp | `--dns-ports`, `--dns-resolve-to` | Queries; answers A, AAAA, SOA, MX, TXT, SRV and ANY, mapping SRV service names to flamingo's own listeners |
 | FTP | 21/tcp | `--ftp-ports` | USER/PASS credentials |
@@ -44,7 +44,13 @@ Pull requests are encouraged for additional protocols and output destinations.
 
 All protocols are enabled by default. The SMB listener negotiates dialects 2.0.2 through 3.1.1 and answers SMB1 clients with NT LM 0.12, so it collects NTLMv2 from modern Windows and LM/NTLMv1 from legacy clients. It never signs: a client that requires signing still completes session setup, which is where the credential is, and drops the session afterwards. The IMAP, POP3, and SMTP listeners advertise STARTTLS (STLS for POP3) and upgrade the session using the configured TLS certificate, so clients that refuse to authenticate in the clear still submit credentials. The MySQL and PostgreSQL listeners honor in-protocol TLS upgrade requests the same way, and the RDP listener terminates TLS for both NLA (CredSSP) and TLS-only clients.
 
-The HTTPS, LDAPS, IMAPS, POP3S, SMTPS, AMQPS, RDP, and STARTTLS-capable listeners use a self-signed certificate unless `--tls-cert` and `--tls-key` are provided. The VNC, NTLM, CRAM-MD5, MySQL, SIP, and MongoDB SCRAM listeners present a fixed challenge, salt, or nonce so captured responses can be cracked offline.
+The HTTPS, LDAPS, IMAPS, POP3S, SMTPS, AMQPS, RDP, and STARTTLS-capable listeners use a self-signed certificate unless `--tls-cert` and `--tls-key` are provided. The VNC, NTLM, CRAM-MD5, MySQL, SIP, SMB, Kerberos, and MongoDB SCRAM listeners present a fixed challenge, salt, or nonce so captured responses can be cracked offline. The NTLM challenge is `1122334455667788` on every listener that uses one.
+
+Two listeners are unavailable on 32-bit builds: **MSRPC and WinRM** are built on a
+third-party NTLM parser that can be crashed by a crafted message where `int` is 32 bits,
+which would terminate flamingo, so on `386` and `arm` they decline to start and say so.
+Every other listener, including SMB and ADWS, uses flamingo's own parsers and runs
+everywhere. Use a 64-bit build if you need MSRPC or WinRM.
 
 ## Name poisoning
 
@@ -148,11 +154,31 @@ C:\> flamingo.exe
 
 ```
 
+Every record carries `_etime`, `_type` (`credential`, `access`, `query` or `relay`),
+`_proto`, `_host` (the client) and `_server` (the listener it reached), plus whatever the
+protocol yielded. A captured SMB authentication looks like this, with the hash trimmed for
+width:
+
+```
+{"_etime":"2026-11-21T18:49:58-06:00","_host":"10.0.0.51:49707","_proto":"smb",
+ "_server":"0.0.0.0:445","_type":"credential","client_version":"10.0.0",
+ "dialect":"3.1.1","domain":"CORP","hashcat":"victim::CORP:1122334455667788:40c9653a...",
+ "hashcat_mode":"5600","ntlm_version":"v2","username":"victim","workstation":""}
+```
+
+The `hashcat` field is ready to crack as-is; `hashcat_mode` names the mode to use.
+
 The default is to log credentials to standard output and append to `flamingo.log` in the working directory.
 
 ## Options
 
-Use `--protocols` to configure a comma-separated list of enabled protocol listeners. The default is `ssh,snmp,ldap,http,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,mssql,redis,mongodb,amqp,socks,sip,rdp`.
+Use `--protocols` to configure a comma-separated list of enabled protocol listeners. The default is:
+
+```
+ssh,snmp,ldap,http,http-proxy,mqtt,dns,ftp,vnc,imap,pop3,smtp,telnet,mysql,postgres,
+mssql,mssql-browser,redis,mongodb,amqp,socks,sip,rdp,smb,kerberos,msrpc,winrm,adws,
+llmnr,nbtns,mdns
+```
 
 ```
 $ flamingo --protocols imap,ldap --imap-ports 143,1143 --ldap-ports 389
@@ -161,6 +187,21 @@ $ flamingo --protocols imap,ldap --imap-ports 143,1143 --ldap-ports 389
 Use additional options to specify ports and protocol options for listeners. Port options accept comma-separated lists and ranges, such as `80,8000-8010`.
 
 All additional command-line arguments are output destinations.
+
+### General options
+
+| Option | Effect |
+|--------|--------|
+| `-v`, `--verbose` | Verbose output, including diagnostics from bundled protocol libraries |
+| `-q`, `--quiet` | Hide startup banners and other extraneous output |
+| `--dont-ignore` | Treat a listener that fails to start as fatal, instead of logging and continuing |
+| `--tls-cert`, `--tls-key` | Certificate and key for the TLS listeners; a self-signed one is generated otherwise |
+| `--tls-name` | Server name for generated certificates (default `localhost`) |
+| `--tls-org` | Organization for generated certificates (default `Flamingo Feed, Inc.`) |
+
+A few protocol options did not fit the tables above: `--wpad-proxy` overrides the
+host or `host:port` a served WPAD file advertises, and `--poison-answer-name` overrides
+the name used in an LLMNR answer record.
 
 ## Outputs
 

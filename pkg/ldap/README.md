@@ -2,6 +2,24 @@
 
 Forked from https://github.com/nmcclain/ldap.git
 
+## Changes made for flamingo
+
+This copy has been modified; the notes below describe upstream. Every change is marked
+with a `flamingo change` comment in the source.
+
+* `server.go` adds an optional `SASLBinder` interface alongside `Binder`. A handler that
+  implements it receives SASL bind requests, with the mechanism and raw credentials, and
+  can return `serverSaslCreds` in the response. A handler that does not implement it keeps
+  the previous behaviour exactly.
+* `server_bind.go` parses `SaslCredentials` and routes to a `SASLBinder` where one is
+  available, rather than refusing every SASL bind with `inappropriateAuthentication`.
+  `encodeBindResponse` gained the optional `[7] serverSaslCreds` field from RFC 4511
+  §4.2.2. `HandleBindRequest` keeps its exported signature and delegates to the new
+  `HandleBindRequestSASL`.
+
+Together these let flamingo capture the NTLM, GSS-SPNEGO, PLAIN and DIGEST-MD5 binds that
+Windows clients actually use. See `pkg/flamingo/ldap_sasl.go`.
+
 This library provides basic LDAP v3 functionality for the GO programming language.
 
 The **client** portion is limited, but sufficient to perform LDAP authentication and directory lookups (binds and searches) against any modern LDAP server (tested with OpenLDAP and AD).
