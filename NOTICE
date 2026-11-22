@@ -10,6 +10,12 @@ Third-Party Components
 This product depends on the following third-party software. Each is used under
 its own license, reproduced with its distribution.
 
+github.com/mandiant/gopacket
+  Copyright 2026 Google LLC. Apache License, Version 2.0.
+  A from-scratch Go reimplementation of Impacket. Flamingo uses its pkg/relay
+  listeners and relay clients for the MSRPC, WinRM and NTLM relay paths. No
+  Impacket source is included in that project; see its own NOTICE.
+
 github.com/hirochachacha/go-smb2/v2
   Copyright (c) 2016 Hiroshi Ioka. BSD 3-Clause License.
   The SMB listener builds on this project's exported x/wire package for SMB2

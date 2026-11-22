@@ -2,7 +2,7 @@
 
 A filter-feeding bird. Captures credentials sprayed across the network by various IT and security products.
 
-Currently supports SSH, HTTP, LDAP, DNS, FTP, SNMP, VNC, IMAP, POP3, SMTP, Telnet, MySQL, PostgreSQL, MSSQL, Redis, MongoDB, AMQP, SOCKS, SIP, RDP, and SMB credential collection, plus LLMNR, NBT-NS, and mDNS name services.
+Currently supports SSH, HTTP, LDAP, DNS, FTP, SNMP, VNC, IMAP, POP3, SMTP, Telnet, MySQL, PostgreSQL, MSSQL, Redis, MongoDB, AMQP, SOCKS, SIP, RDP, SMB, Kerberos, MSRPC, WinRM, ADWS, and MQTT credential collection, plus LLMNR, NBT-NS, and mDNS name services and optional NTLM relaying.
 
 Pull requests are encouraged for additional protocols and output destinations.
 
@@ -12,10 +12,10 @@ Pull requests are encouraged for additional protocols and output destinations.
 |----------|---------------|---------|----------|
 | SSH | 22/tcp | `--ssh-ports`, `--ssh-host-key` | Passwords and public keys |
 | HTTP/HTTPS | 80/tcp, 443/tcp | `--http-ports`, `--https-ports`, `--http-auth-mode`, `--http-realm` | Basic credentials or NTLM challenge/response |
-| LDAP/LDAPS | 389/tcp, 636/tcp | `--ldap-ports`, `--ldaps-ports` | Simple bind credentials |
-| DNS | 53/udp, 5353/udp | `--dns-ports`, `--dns-resolve-to` | Queries |
+| LDAP/LDAPS | 389/tcp, 636/tcp | `--ldap-ports`, `--ldaps-ports` | Simple bind credentials, SASL PLAIN, SASL DIGEST-MD5, and NTLM/GSS-SPNEGO binds (hashcat mode 5600) |
+| DNS | 53/udp, 5353/udp | `--dns-ports`, `--dns-resolve-to` | Queries; answers A, AAAA, SOA, MX, TXT, SRV and ANY, mapping SRV service names to flamingo's own listeners |
 | FTP | 21/tcp | `--ftp-ports` | USER/PASS credentials |
-| SNMP | 161/udp | `--snmp-ports` | Community strings |
+| SNMP | 161/udp | `--snmp-ports` | v1/v2c community strings and v3 USM authentication (hashcat modes 25000, 26700-27300) |
 | VNC | 5900/tcp | `--vnc-ports` | DES challenge/response (hashcat mode 14000, john `vnc`) |
 | IMAP/IMAPS | 143/tcp, 993/tcp | `--imap-ports`, `--imaps-ports` | LOGIN, PLAIN, and SASL LOGIN credentials; CRAM-MD5 challenge/response (hashcat mode 10200) |
 | POP3/POP3S | 110/tcp, 995/tcp | `--pop3-ports`, `--pop3s-ports` | USER/PASS, SASL PLAIN and LOGIN credentials; APOP digests; CRAM-MD5 challenge/response (hashcat mode 10200) |
@@ -23,7 +23,7 @@ Pull requests are encouraged for additional protocols and output destinations.
 | Telnet | 23/tcp | `--telnet-ports` | Login prompt username/password attempts |
 | MySQL | 3306/tcp | `--mysql-ports` | mysql_native_password challenge/response (hashcat mode 11200) and cleartext passwords via auth switch |
 | PostgreSQL | 5432/tcp | `--postgres-ports` | Cleartext passwords (SSLRequest upgrades are honored) |
-| MSSQL | 1433/tcp | `--mssql-ports` | TDS LOGIN7 username/password |
+| MSSQL | 1433/tcp | `--mssql-ports` | TDS LOGIN7 username/password, and NTLM from Windows Authentication (hashcat mode 5600) |
 | Redis | 6379/tcp | `--redis-ports` | AUTH and HELLO credentials |
 | MongoDB | 27017/tcp | `--mongodb-ports` | SASL PLAIN credentials; SCRAM-SHA-1/SCRAM-SHA-256 client proofs with the salt, nonces, and auth message |
 | AMQP/AMQPS | 5672/tcp, 5671/tcp | `--amqp-ports`, `--amqps-ports` | PLAIN and AMQPLAIN credentials |
@@ -31,6 +31,13 @@ Pull requests are encouraged for additional protocols and output destinations.
 | SIP | 5060/udp | `--sip-ports` | Digest challenge/response (hashcat mode 11400) |
 | RDP | 3389/tcp | `--rdp-ports` | CredSSP NTLM challenge/response (hashcat mode 5600) and cleartext Client Info passwords from TLS-only clients |
 | SMB | 445/tcp, 139/tcp | `--smb-ports` | NTLMv2 (hashcat mode 5600) and NTLMv1 (hashcat mode 5500) from SMB1, SMB2 and SMB3 session setup |
+| Kerberos | 88/tcp, 88/udp | `--kerberos-ports`, `--kerberos-force-ntlm` | AS-REQ pre-authentication timestamps (hashcat modes 7500, 19800, 19900) |
+| MSRPC | 135/tcp | `--msrpc-ports` | NTLM from DCE/RPC bind authentication (hashcat mode 5600) |
+| WinRM | 5985/tcp, 5986/tcp | `--winrm-ports`, `--winrms-ports` | NTLM over WS-Management (hashcat mode 5600) |
+| ADWS | 9389/tcp | `--adws-ports` | NTLM from Active Directory Web Services (hashcat mode 5600) |
+| SQL Browser | 1434/udp | `--mssql-browser-ports` | Instance discovery requests; answers point clients at the MSSQL listener |
+| HTTP proxy | 3128/tcp | `--http-proxy-ports`, `--http-wpad` | Proxy credentials via 407 (NTLM hashcat mode 5600, or Basic) |
+| MQTT | 1883/tcp | `--mqtt-ports` | CONNECT username and password |
 | LLMNR | 5355/udp | `--llmnr-ports`, `--poison-*` | Name queries; answers with this host's address |
 | NBT-NS | 137/udp | `--nbtns-ports`, `--poison-*` | Name queries; answers with this host's address |
 | mDNS | 5353/udp | `--mdns-ports`, `--poison-*` | Name queries; answers with this host's address |
@@ -74,6 +81,47 @@ Scope controls apply to both modes, and are worth setting on any real engagement
 
 By default the answer carries this host's own address on the interface the query arrived
 on, so no configuration is needed on a single-homed host.
+
+## NTLM relay
+
+Flamingo can forward a captured NTLM authentication to another host, authenticating
+there as the victim, rather than only recording the hash. This is off unless you name
+somewhere to send it:
+
+```
+$ flamingo --relay-targets smb://10.0.0.5,ldaps://dc01.corp.local
+```
+
+With no `--relay-targets`, no relaying happens anywhere and every listener stays
+capture-only. With targets set, the default action is still conservative: authenticate,
+report whether the target accepted it and at what privilege, and disconnect. Post-relay
+modules are each opt-in by name:
+
+```
+$ flamingo --relay-targets smb://10.0.0.5 --relay-attack secretsdump
+```
+
+Relaying is supported from the SMB, MSRPC, WinRM and ADWS listeners. Schemes accepted by
+`--relay-targets` are `smb`, `ldap`, `ldaps`, `http`, `https`, `mssql`, `winrm`, `winrms`
+and `rpc`; a bare host means `smb`. Other options are `--relay-attack`,
+`--relay-one-shot`, `--relay-random-target` and `--relay-timeout`.
+
+Each attempt produces a `_type: relay` record alongside the usual credential, so you can
+tell the three cases apart: `relayed: true` with `outcome: success` (the target accepted
+it), `relayed: true` with `outcome: rejected` or `signing-required`, and `relayed: false`
+with `outcome: unreachable` or `no-target`. The credential is recorded either way.
+
+Two limits are worth knowing before you rely on this:
+
+* **A relayed session cannot be signed.** There is no session key for a relayed
+  authentication, and the relay client negotiates at most SMB 3.0. A target that requires
+  signing will accept the authentication and then refuse to serve the session; flamingo
+  reports that as `signing-required` rather than a generic failure.
+* **A target on this host is refused at startup**, as is one on a port flamingo is
+  listening on. Relaying a victim back into flamingo captures nothing new and loops.
+
+Relaying authenticates to a third party as someone else. Only use it where you are
+authorized to do so.
 
 ## Usage
 
