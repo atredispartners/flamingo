@@ -73,11 +73,13 @@ func (c *ConfNBTNS) Shutdown() {
 // SpawnNBTNS starts an NBT-NS poisoner. NBT-NS is broadcast-based and IPv4 only,
 // so no multicast group is joined.
 //
-// Name poisoning is active, not passive: unlike the capture listeners it makes
-// hosts connect to flamingo. It is therefore opt-in and OFF by default; an
-// operator must explicitly enable it (e.g. --protocols nbtns,smb) and should only
-// do so inside an authorized engagement scope. The ScopePolicy and analyze mode
-// exist to keep answers inside that scope.
+// Name poisoning is active, not passive: answering is what makes hosts connect
+// to flamingo. The line is drawn by reach, not by listener. This one runs by
+// default -- it logs every query it sees and answers those sent directly to
+// this host, like any other listener. Answering a query broadcast to the
+// segment reaches hosts that were never talking to flamingo, so that half
+// needs AnswerBroadcast (--poison-broadcast). The ScopePolicy and analyze mode
+// narrow answers further, inside an authorized engagement scope.
 func SpawnNBTNS(c *ConfNBTNS) error {
 	v4host, _ := poisonBindHosts(c.BindHost)
 	if v4host == "" {

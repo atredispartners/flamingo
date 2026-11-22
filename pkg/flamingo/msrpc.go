@@ -269,12 +269,45 @@ func (s *msrpcServer) Start(results chan<- relay.AuthResult) error {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
-				return
+				if s.acceptFailed("msrpc", err) {
+					return
+				}
+				continue
 			}
 			go s.handleConnection(conn)
 		}
 	}()
 	return nil
+}
+
+// acceptRetryDelay is how long an accept loop waits after a failure that is
+// not shutdown, so a listener that cannot accept right now does not spin.
+const acceptRetryDelay = 50 * time.Millisecond
+
+// acceptFailed decides what an Accept error means. It reports true when the
+// loop should stop.
+//
+// Stop closes done before closing the listener, so an error after that is the
+// shutdown and the loop is finished. Any other error is transient from the
+// listener's point of view -- Accept hands the caller resource failures such
+// as EMFILE when the process runs out of descriptors, which a tool pointed at
+// a hostile segment can provoke by opening connections in bulk. Returning on
+// those would retire this listener for the rest of the run with nothing
+// logged, while the process stayed up and reported itself healthy, so back
+// off briefly and keep serving instead.
+func acceptFailed(done <-chan struct{}, proto string, err error) bool {
+	select {
+	case <-done:
+		return true
+	default:
+	}
+	log.Debugf("%s: accept failed, retrying: %s", proto, err)
+	time.Sleep(acceptRetryDelay)
+	return false
+}
+
+func (s *msrpcServer) acceptFailed(proto string, err error) bool {
+	return acceptFailed(s.done, proto, err)
 }
 
 // Stop closes the listener, implementing relay.ProtocolServer. Connections
@@ -717,6 +750,19 @@ func (s *msrpcServer) negotiate(conn net.Conn, pdu *msrpcPDU, type1 []byte, resu
 		Type2Ch:    make(chan []byte, 1),
 		Type3Ch:    make(chan []byte, 1),
 		ResultCh:   make(chan bool, 1),
+	}
+	// Check for shutdown before offering the exchange. results is buffered,
+	// so after Stop the send can still succeed on free buffer space even
+	// though the adapter's loop has returned and its drain grace has passed
+	// -- and a plain two-case select picks uniformly among ready cases, so
+	// that happens about half the time. The handler would then park on
+	// Type2Ch forever with nobody left to answer it, and the connection
+	// deadline would not help because the block is on a channel, not the
+	// socket. Letting done win first makes the stop deterministic.
+	select {
+	case <-s.done:
+		return auth, false, false
+	default:
 	}
 	select {
 	case s.results <- auth:

@@ -271,3 +271,35 @@ func TestLLMNRBroadcastGate(t *testing.T) {
 		t.Fatal("expected a record for the answered query")
 	}
 }
+
+// TestParseLLMNRQueryDeclinesMultiLabel checks that a multi-label QNAME is
+// declined rather than answered. buildLLMNRAnswer echoes the question as a
+// single length-prefixed label, so answering one would send back a question
+// the querier cannot match and silently drops -- a poisoning attempt that
+// looks successful in the log and never lands.
+func TestParseLLMNRQueryDeclinesMultiLabel(t *testing.T) {
+	multi := []byte{
+		0x13, 0x37, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		4, 'h', 'o', 's', 't', 5, 'l', 'o', 'c', 'a', 'l', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+	}
+	if _, _, _, _, ok := parseLLMNRQuery(multi); ok {
+		t.Error("a multi-label LLMNR query was accepted; the reply could not have matched")
+	}
+
+	single := []byte{
+		0x13, 0x37, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		4, 'w', 'p', 'a', 'd', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+	}
+	tid, name, qtype, wantV6, ok := parseLLMNRQuery(single)
+	if !ok {
+		t.Fatal("a single-label LLMNR query was rejected")
+	}
+	if string(name) != "wpad" || qtype != "A" || wantV6 {
+		t.Errorf("name = %q qtype = %q wantV6 = %v, want wpad A false", name, qtype, wantV6)
+	}
+	if len(tid) != 2 || tid[0] != 0x13 || tid[1] != 0x37 {
+		t.Errorf("tid = % x, want 13 37", tid)
+	}
+}

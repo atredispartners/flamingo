@@ -100,3 +100,65 @@ func TestMDNSEndToEnd(t *testing.T) {
 		t.Errorf("end-to-end answer mismatch\n got %s\nwant %s", hex.EncodeToString(buf[:n]), hex.EncodeToString(want))
 	}
 }
+
+// TestParseMDNSQueryIgnoresKnownAnswers builds the query a real mDNS client
+// sends when it is doing known-answer suppression (RFC 6762 section 7.1): one
+// question followed by an answer record it already holds. The name and QTYPE
+// must come from the question, not from a slice off the end of the datagram.
+func TestParseMDNSQueryIgnoresKnownAnswers(t *testing.T) {
+	question := []byte{
+		4, 'w', 'p', 'a', 'd', 5, 'l', 'o', 'c', 'a', 'l', 0x00,
+		0x00, 0x01, // QTYPE A
+		0x00, 0x01, // QCLASS IN
+	}
+	knownAnswer := []byte{
+		4, 'w', 'p', 'a', 'd', 5, 'l', 'o', 'c', 'a', 'l', 0x00,
+		0x00, 0x01, 0x00, 0x01,
+		0x00, 0x00, 0x00, 0x78, // TTL
+		0x00, 0x04, // RDLENGTH
+		10, 0, 0, 5, // RDATA
+	}
+	data := []byte{
+		0x00, 0x00, 0x00, 0x00,
+		0x00, 0x01, // QDCOUNT 1
+		0x00, 0x01, // ANCOUNT 1
+		0x00, 0x00, 0x00, 0x00,
+	}
+	data = append(data, question...)
+	data = append(data, knownAnswer...)
+
+	name, rawName, qtype, wantV6, ok := parseMDNSQuery(data)
+	if !ok {
+		t.Fatal("a query with a known-answer record was rejected")
+	}
+	if name != "wpad.local" {
+		t.Errorf("name = %q, want wpad.local", name)
+	}
+	if qtype != "A" || wantV6 {
+		t.Errorf("qtype = %q wantV6 = %v, want A false", qtype, wantV6)
+	}
+	// The echoed owner name must be the question's labels alone. Slicing from
+	// the end of the datagram used to swallow the known-answer record.
+	want := question[:len(question)-5]
+	if !bytes.Equal(rawName, want) {
+		t.Errorf("rawName = % x, want % x", rawName, want)
+	}
+}
+
+// TestParseMDNSQueryAcceptsUnicastResponseBit covers the QU bit mDNS packs
+// into the top bit of QCLASS (RFC 6762 section 5.4).
+func TestParseMDNSQueryAcceptsUnicastResponseBit(t *testing.T) {
+	data := []byte{
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		4, 'w', 'p', 'a', 'd', 5, 'l', 'o', 'c', 'a', 'l', 0x00,
+		0x00, 0x01, // QTYPE A
+		0x80, 0x01, // QCLASS IN with the QU bit set
+	}
+	name, _, qtype, _, ok := parseMDNSQuery(data)
+	if !ok {
+		t.Fatal("a QU query was rejected")
+	}
+	if name != "wpad.local" || qtype != "A" {
+		t.Errorf("name = %q qtype = %q, want wpad.local A", name, qtype)
+	}
+}

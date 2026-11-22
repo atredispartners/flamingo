@@ -256,21 +256,22 @@ func (c *ConfMSSQLBrowser) handle(data []byte, src net.Addr, ifIndex int, dst ne
 		return nil
 	}
 
-	respond, reason := true, ""
+	// Scope first, reach second -- the same order as the name poisoners. The
+	// scope controls mean what they say regardless of how the request
+	// arrived: --poison-analyze answers nothing at all, and a host excluded
+	// with --poison-dont-respond-to is not answered just because it addressed
+	// this listener directly. SSRP's CLNT_UCAST_EX and CLNT_UCAST_INST are
+	// unicast by definition, so consulting the policy only for broadcast
+	// would have exempted the common case from scoping entirely.
+	respond, reason := c.Policy.ShouldRespond(srcIP(src), instance)
 
-	// Answering a broadcast discovery request advertises this host to a whole
-	// segment, so it is gated and scoped exactly as the name poisoners are: an
-	// operator who scopes a run with --poison-respond-to expects that to cover
-	// every broadcast answer flamingo gives, not just the LLMNR ones. A query
-	// directed at this host is answered like any other listener's traffic, so
-	// only the broadcast case consults the policy.
-	if !poisonIsDirected(dst) {
-		switch {
-		case !c.AnswerBroadcast:
-			respond, reason = false, poisonBroadcastReason
-		default:
-			respond, reason = c.Policy.ShouldRespond(srcIP(src), instance)
-		}
+	// Answering a broadcast discovery request advertises a SQL Server that
+	// does not exist to every host on the segment, which is the active,
+	// opt-in half; a request directed at this host is answered like any other
+	// flamingo listener would.
+	if respond && !poisonIsDirected(dst) && !c.AnswerBroadcast {
+		respond = false
+		reason = poisonBroadcastReason
 	}
 
 	var resp []byte

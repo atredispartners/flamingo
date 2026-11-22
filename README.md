@@ -2,7 +2,7 @@
 
 A filter-feeding bird. Captures credentials sprayed across the network by various IT and security products.
 
-Currently supports SSH, HTTP, LDAP, DNS, FTP, SNMP, VNC, IMAP, POP3, SMTP, Telnet, MySQL, PostgreSQL, MSSQL, Redis, MongoDB, AMQP, SOCKS, SIP, RDP, SMB, Kerberos, MSRPC, WinRM, ADWS, and MQTT credential collection, plus LLMNR, NBT-NS, and mDNS name services and optional NTLM relaying.
+Currently supports SSH, HTTP, HTTP proxy, LDAP, DNS, FTP, SNMP, VNC, IMAP, POP3, SMTP, Telnet, MySQL, PostgreSQL, MSSQL, SQL Browser, Redis, MongoDB, AMQP, SOCKS, SIP, RDP, SMB, Kerberos, MSRPC, WinRM, ADWS, and MQTT credential collection, plus LLMNR, NBT-NS, and mDNS name services and optional NTLM relaying.
 
 Pull requests are encouraged for additional protocols and output destinations.
 
@@ -13,7 +13,7 @@ Pull requests are encouraged for additional protocols and output destinations.
 | SSH | 22/tcp | `--ssh-ports`, `--ssh-host-key` | Passwords and public keys |
 | HTTP/HTTPS | 80/tcp, 443/tcp | `--http-ports`, `--https-ports`, `--http-auth-mode`, `--http-realm`, `--http-wpad` | Basic credentials or NTLM challenge/response (hashcat mode 5600); optionally serves a WPAD file |
 | LDAP/LDAPS | 389/tcp, 636/tcp | `--ldap-ports`, `--ldaps-ports` | Simple bind credentials, SASL PLAIN, SASL DIGEST-MD5, and NTLM/GSS-SPNEGO binds (hashcat mode 5600) |
-| DNS | 53/udp, 5353/udp | `--dns-ports`, `--dns-resolve-to` | Queries; answers A, AAAA, SOA, MX, TXT, SRV and ANY, mapping SRV service names to flamingo's own listeners |
+| DNS | 53/udp | `--dns-ports`, `--dns-resolve-to` | Queries; answers A, AAAA, SOA, MX, TXT, SRV and ANY, mapping SRV service names to flamingo's own listeners |
 | FTP | 21/tcp | `--ftp-ports` | USER/PASS credentials |
 | SNMP | 161/udp | `--snmp-ports` | v1/v2c community strings and v3 USM authentication (hashcat modes 25000, 26700-27300) |
 | VNC | 5900/tcp | `--vnc-ports` | DES challenge/response (hashcat mode 14000, john `vnc`) |
@@ -35,8 +35,8 @@ Pull requests are encouraged for additional protocols and output destinations.
 | MSRPC | 135/tcp | `--msrpc-ports` | NTLM from DCE/RPC bind authentication (hashcat mode 5600); answers `IObjectExporter::ServerAlive2` so a DCOM client that pings first goes on to authenticate |
 | WinRM | 5985/tcp, 5986/tcp | `--winrm-ports`, `--winrms-ports` | NTLM over WS-Management on `/wsman` (hashcat mode 5600) |
 | ADWS | 9389/tcp | `--adws-ports` | NTLM from Active Directory Web Services (hashcat mode 5600) |
-| SQL Browser | 1434/udp | `--mssql-browser-ports` | Instance discovery requests; answers point clients at the MSSQL listener |
-| HTTP proxy | 3128/tcp | `--http-proxy-ports`, `--http-wpad` | Proxy credentials via 407 (NTLM hashcat mode 5600, or Basic) |
+| SQL Browser | 1434/udp | `--mssql-browser-ports`, `--poison-broadcast` | Instance discovery requests; answers point clients at the MSSQL listener. Discovery is usually broadcast to the segment, so answering it needs `--poison-broadcast` |
+| HTTP proxy | 3128/tcp | `--http-proxy-ports` | Proxy credentials via 407 (NTLM hashcat mode 5600, or Basic). `--http-wpad` is served by the HTTP/HTTPS listeners and points clients here |
 | MQTT | 1883/tcp | `--mqtt-ports` | CONNECT username and password |
 | LLMNR | 5355/udp | `--llmnr-ports`, `--poison-*` | Name queries; answers with this host's address |
 | NBT-NS | 137/udp | `--nbtns-ports`, `--poison-*` | Name queries; answers with this host's address |
@@ -44,12 +44,14 @@ Pull requests are encouraged for additional protocols and output destinations.
 
 All protocols are enabled by default. The SMB listener negotiates dialects 2.0.2 through 3.1.1 and answers SMB1 clients with NT LM 0.12, so it collects NTLMv2 from modern Windows and LM/NTLMv1 from legacy clients. It never signs: a client that requires signing still completes session setup, which is where the credential is, and drops the session afterwards. The IMAP, POP3, and SMTP listeners advertise STARTTLS (STLS for POP3) and upgrade the session using the configured TLS certificate, so clients that refuse to authenticate in the clear still submit credentials. The MySQL and PostgreSQL listeners honor in-protocol TLS upgrade requests the same way, and the RDP listener terminates TLS for both NLA (CredSSP) and TLS-only clients.
 
-The HTTPS, LDAPS, IMAPS, POP3S, SMTPS, AMQPS, RDP, and STARTTLS-capable listeners use a self-signed certificate unless `--tls-cert` and `--tls-key` are provided. The VNC, NTLM, CRAM-MD5, MySQL, SIP, SMB, Kerberos, and MongoDB SCRAM listeners present a fixed challenge, salt, or nonce so captured responses can be cracked offline. The NTLM challenge is `1122334455667788` on every listener that uses one.
+The HTTPS, LDAPS, IMAPS, POP3S, SMTPS, AMQPS, WinRM over TLS (5986), RDP, and STARTTLS-capable listeners use a self-signed certificate unless `--tls-cert` and `--tls-key` are provided. The VNC, NTLM, CRAM-MD5, MySQL, SIP, SMB, and MongoDB SCRAM listeners present a fixed challenge, salt, or nonce so captured responses can be cracked offline; the Kerberos listener returns the standard `realm+cname` salt, which is derived rather than fixed but equally predictable. The NTLM challenge is `1122334455667788` on every listener that uses one.
 
-Every listener runs on every supported platform. Flamingo parses the protocols it
-listens for with its own code rather than handing attacker-controlled bytes to a
-library, which is what keeps the 32-bit `386` and `arm` builds usable: WinRM runs on
-flamingo's own HTTP collector, and SMB, ADWS and MSRPC are native implementations.
+Every listener runs on every supported platform. The listeners that take NTLM from an
+unauthenticated peer — SMB, MSRPC, ADWS and WinRM — are flamingo's own code rather than
+wrappers over gopacket's protocol servers, whose NTLM parsing does length arithmetic that
+panics where `int` is 32 bits; that is what keeps the `386` and `arm` builds usable. It is
+not a blanket rule about libraries: DNS is served by miekg/dns, SNMP decodes with gosnmp,
+and LDAP parses with the in-tree BER fork.
 
 ## Name poisoning
 
@@ -153,7 +155,8 @@ C:\> flamingo.exe
 
 ```
 
-Every record carries `_etime`, `_type` (`credential`, `access`, `query` or `relay`),
+Every record carries `_etime`, `_type` (`credential`, `access`, `query`, `relay` or
+`relay_attack`),
 `_proto`, `_host` (the client) and `_server` (the listener it reached), plus whatever the
 protocol yielded. A captured SMB authentication looks like this, with the hash trimmed for
 width:
@@ -260,7 +263,10 @@ Flamingo is BSD 2-Clause licensed; see [LICENSE](LICENSE). Dependencies and thei
 licenses are listed in [NOTICE](NOTICE).
 
 The SMB listener is built on the exported `x/wire` codecs from
-[go-smb2](https://github.com/hirochachacha/go-smb2) (BSD 3-Clause) by Hiroshi Ioka.
+[go-smb2](https://github.com/hirochachacha/go-smb2) (BSD 3-Clause) by Hiroshi Ioka. The
+relay clients and every post-relay attack module come from
+[gopacket](https://github.com/mandiant/gopacket) (Apache-2.0) by Mandiant. Both are
+ordinary module dependencies — no source from either project is copied into this tree.
 
 The name-poisoning listeners cover much of what
 [Responder](https://github.com/lgandx/Responder) does, but share no code with it.

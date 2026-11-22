@@ -109,7 +109,12 @@ func init() {
 	rootCmd.Flags().StringVarP(&params.LDAPSPorts, "ldaps-ports", "", "636", "The list of TCP ports to listen on for LDAPS")
 
 	// DNS parameters
-	rootCmd.Flags().StringVarP(&params.DNSPorts, "dns-ports", "", "53,5353", "The list of UDP ports to listen on for DNS")
+	// 5353 belongs to the mdns listener, which is in the default --protocols
+	// list and speaks the multicast semantics this plain DNS server does not.
+	// Listing it here too meant whichever started first won and the other
+	// logged a bind error, so DNS defaults to 53 alone; pass --dns-ports
+	// 53,5353 to put the plain DNS server back on it.
+	rootCmd.Flags().StringVarP(&params.DNSPorts, "dns-ports", "", "53", "The list of UDP ports to listen on for DNS")
 	rootCmd.Flags().StringVarP(&params.DNSResolveToIP, "dns-resolve-to", "", "", "The address(es) to answer DNS queries with, comma-separated for both families (e.g. 10.0.0.1,fd00::1). If empty, queries are logged but not answered")
 
 	// FTP parameters

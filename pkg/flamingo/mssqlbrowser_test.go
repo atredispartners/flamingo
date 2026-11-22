@@ -294,10 +294,44 @@ func TestMSSQLBrowserBroadcastRespectsScope(t *testing.T) {
 	if resp := conf.handle([]byte{0x02}, outOfScope, 0, broadcast); resp != nil {
 		t.Error("out-of-scope broadcast query was answered")
 	}
-	// A directed query is this host's own traffic and is answered regardless.
+	// The scope policy applies to directed requests too. SSRP's CLNT_UCAST_EX
+	// and CLNT_UCAST_INST are unicast by definition, so scoping only the
+	// broadcast case would exempt the common case entirely: a host the
+	// operator excluded from the engagement would still be answered as long
+	// as it addressed this listener directly. The name poisoners consult the
+	// policy for every query and so does this one.
 	if ip := anyUsableIP(false); ip != nil {
-		if resp := conf.handle([]byte{0x02}, outOfScope, 0, ip); resp == nil {
-			t.Error("directed query was refused by the broadcast scope policy")
+		if resp := conf.handle([]byte{0x02}, outOfScope, 0, ip); resp != nil {
+			t.Error("out-of-scope directed query was answered")
+		}
+		if resp := conf.handle([]byte{0x02}, inScope, 0, ip); resp == nil {
+			t.Error("in-scope directed query was not answered")
+		}
+	}
+}
+
+// TestMSSQLBrowserAnalyzeAnswersNothing pins the documented meaning of
+// --poison-analyze ("observe and log poisoner queries but answer nothing") on
+// the SQL Browser responder, for directed requests as well as broadcast ones.
+func TestMSSQLBrowserAnalyzeAnswersNothing(t *testing.T) {
+	broadcast := net.ParseIP("255.255.255.255")
+	querier := &net.UDPAddr{IP: net.ParseIP("10.0.0.9"), Port: 1434}
+
+	conf := NewConfMSSQLBrowser()
+	conf.RecordWriter = NewRecordWriter()
+	conf.AnswerBroadcast = true
+	policy, err := NewScopePolicy("10.0.0.0/24", "", "", "", "", true)
+	if err != nil {
+		t.Fatalf("scope policy: %s", err)
+	}
+	conf.Policy = policy
+
+	if resp := conf.handle([]byte{0x02}, querier, 0, broadcast); resp != nil {
+		t.Error("analyze mode answered a broadcast query")
+	}
+	if ip := anyUsableIP(false); ip != nil {
+		if resp := conf.handle([]byte{0x02}, querier, 0, ip); resp != nil {
+			t.Error("analyze mode answered a directed query")
 		}
 	}
 }

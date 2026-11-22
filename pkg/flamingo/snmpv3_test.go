@@ -432,3 +432,42 @@ func TestSNMPv2cStillCaptured(t *testing.T) {
 		t.Errorf("community = %q", rec["community"])
 	}
 }
+
+// TestBERNextRejectsOverflowingLength feeds berNext the long-form lengths that
+// sit just under math.MaxInt32, the range where off+length wraps to a negative
+// number in a 32-bit int.
+//
+// On a 64-bit build these inputs were always rejected, so this test can only
+// fail on 386 or arm -- which is the point: flamingo ships both, SNMP is in the
+// default --protocols list, and six bytes from any unauthenticated peer reach
+// this function through snmpMessageVersion. Before the guard compared against
+// the bytes remaining instead of forming off+length, that wrap slipped past the
+// bounds check and panicked on the slice.
+func TestBERNextRejectsOverflowingLength(t *testing.T) {
+	for _, length := range []uint32{
+		0x7fffffff, 0x7ffffffe, 0x7ffffff9, 0x40000000, 0x0fffffff,
+	} {
+		b := []byte{
+			0x30, 0x84,
+			byte(length >> 24), byte(length >> 16), byte(length >> 8), byte(length),
+		}
+		e, err := berNext(b, 0)
+		if err == nil {
+			t.Errorf("length %#x: accepted a length past the end of a %d-byte buffer (content %d bytes)",
+				length, len(b), len(e.content))
+		}
+	}
+}
+
+// TestBERNextAcceptsExactFit guards the other side of that comparison: a
+// long-form length that exactly consumes the remaining bytes is still valid.
+func TestBERNextAcceptsExactFit(t *testing.T) {
+	b := []byte{0x30, 0x81, 0x02, 0xaa, 0xbb}
+	e, err := berNext(b, 0)
+	if err != nil {
+		t.Fatalf("exact-fit length was rejected: %s", err)
+	}
+	if len(e.content) != 2 || e.content[0] != 0xaa || e.content[1] != 0xbb {
+		t.Errorf("content = % x, want aa bb", e.content)
+	}
+}

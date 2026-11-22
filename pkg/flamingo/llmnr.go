@@ -79,11 +79,13 @@ func (c *ConfLLMNR) Shutdown() {
 
 // SpawnLLMNR starts an LLMNR poisoner listening on the configured port.
 //
-// Name poisoning is active, not passive: unlike the capture listeners it makes
-// hosts connect to flamingo. It is therefore opt-in and OFF by default; an
-// operator must explicitly enable it (e.g. --protocols llmnr,nbtns,smb) and
-// should only do so inside an authorized engagement scope. The ScopePolicy and
-// analyze mode exist to keep answers inside that scope.
+// Name poisoning is active, not passive: answering is what makes hosts connect
+// to flamingo. The line is drawn by reach, not by listener. This one runs by
+// default -- it logs every query it sees and answers those sent directly to
+// this host, like any other listener. Answering a query multicast to the
+// segment reaches hosts that were never talking to flamingo, so that half
+// needs AnswerBroadcast (--poison-broadcast). The ScopePolicy and analyze mode
+// narrow answers further, inside an authorized engagement scope.
 func SpawnLLMNR(c *ConfLLMNR) error {
 	v4host, v6host := poisonBindHosts(c.BindHost)
 
@@ -131,11 +133,21 @@ func parseLLMNRQuery(data []byte) (tid, name []byte, qtype string, wantV6, ok bo
 		return nil, nil, "", false, false
 	}
 	nameLen := int(data[12])
-	if nameLen == 0 || 13+nameLen > len(data) {
+	if nameLen == 0 || 13+nameLen >= len(data) {
+		return nil, nil, "", false, false
+	}
+	// LLMNR resolves flat, single-label names, and buildLLMNRAnswer echoes
+	// the question as one length-prefixed label. A multi-label QNAME would
+	// therefore come back with a question the querier does not match and
+	// silently discards, so decline it here rather than send a reply that
+	// cannot work. A single label is followed directly by the null label.
+	if data[13+nameLen] != 0x00 {
 		return nil, nil, "", false, false
 	}
 	name = data[13 : 13+nameLen]
-	qtype, wantV6, ok = classifyDNSQuery(data)
+	// Read QTYPE/QCLASS where the question actually ends, not from the tail
+	// of the datagram.
+	qtype, wantV6, ok = classifyDNSQueryAt(data, 13+nameLen+1)
 	if !ok {
 		return nil, nil, "", false, false
 	}

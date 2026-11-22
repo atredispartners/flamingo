@@ -856,10 +856,23 @@ func relayPrivilege(admin bool) string {
 // open for the life of the process.
 func (r *RelayResponder) attach(x *NTLMExchange, s *relaySession) {
 	r.m.Lock()
-	defer r.m.Unlock()
 	if r.sessions == nil {
 		r.sessions = make(map[*NTLMExchange]*relaySession)
 	}
+
+	// An HTTP listener hands out one *NTLMExchange per connection, and that
+	// pointer is this map's key, so a victim that begins a second NTLM
+	// handshake on the same keep-alive connection arrives here with a session
+	// already attached. RefuseAuth invites exactly that: a successful Type 3
+	// is still answered with a 401, and a WinRM client may simply start over.
+	// Overwriting the entry would strand the old session -- nothing left to
+	// Kill its client connection to the target -- and leave its watchdog
+	// running, which on expiry would detach and close whichever session had
+	// since taken its place, killing a live relay and logging it as one that
+	// never authenticated. Displace the old session explicitly instead, and
+	// close it outside the lock since Kill touches the network.
+	old := r.sessions[x]
+
 	s.timer = time.AfterFunc(r.Conf.timeout()+relayIdleGrace, func() {
 		if expired := r.detach(x); expired != nil {
 			log.Debugf("relay: %s from %s never authenticated, dropping the session to %s",
@@ -868,6 +881,13 @@ func (r *RelayResponder) attach(x *NTLMExchange, s *relaySession) {
 		}
 	})
 	r.sessions[x] = s
+	r.m.Unlock()
+
+	if old != nil {
+		log.Debugf("relay: %s from %s restarted authentication, dropping its earlier session to %s",
+			x.Proto, x.RemoteAddr, old.target)
+		old.close()
+	}
 }
 
 // detach removes a session from the responder and disarms its watchdog,

@@ -72,11 +72,13 @@ func (c *ConfMDNS) Shutdown() {
 
 // SpawnMDNS starts an mDNS poisoner listening on the configured port.
 //
-// Name poisoning is active, not passive: unlike the capture listeners it makes
-// hosts connect to flamingo. It is therefore opt-in and OFF by default; an
-// operator must explicitly enable it (e.g. --protocols mdns,smb) and should only
-// do so inside an authorized engagement scope. The ScopePolicy and analyze mode
-// exist to keep answers inside that scope.
+// Name poisoning is active, not passive: answering is what makes hosts connect
+// to flamingo. The line is drawn by reach, not by listener. This one runs by
+// default -- it logs every query it sees and answers those sent directly to
+// this host, like any other listener. Answering a query multicast to the
+// segment reaches hosts that were never talking to flamingo, so that half
+// needs AnswerBroadcast (--poison-broadcast). The ScopePolicy and analyze mode
+// narrow answers further, inside an authorized engagement scope.
 func SpawnMDNS(c *ConfMDNS) error {
 	v4host, v6host := poisonBindHosts(c.BindHost)
 
@@ -119,18 +121,21 @@ func parseMDNSQuery(data []byte) (name string, rawName []byte, qtype string, wan
 	if len(data) < 18 {
 		return "", nil, "", false, false
 	}
-	display, nameOK := parseLabelName(data, 12)
+	// Parse the first question properly rather than slicing from the end of
+	// the datagram. A query may carry several questions, and a client doing
+	// known-answer suppression (RFC 6762 section 7.1) appends answer records
+	// after them; a blind tail slice swallowed all of that into the name and
+	// echoed it back as the answer's owner, producing a malformed reply.
+	display, qEnd, nameOK := parseLabelNameEnd(data, 12)
 	if !nameOK {
 		return "", nil, "", false, false
 	}
-	// The answer name is the raw encoded labels, excluding the terminating
-	// null label (1) and the trailing QTYPE (2) + QCLASS (2).
-	end := len(data) - 5
-	if end <= 12 {
+	// The answer name is the raw encoded labels without the terminating null.
+	if qEnd-1 <= 12 {
 		return "", nil, "", false, false
 	}
-	rawName = data[12:end]
-	qtype, wantV6, ok = classifyDNSQuery(data)
+	rawName = data[12 : qEnd-1]
+	qtype, wantV6, ok = classifyDNSQueryAt(data, qEnd)
 	if !ok {
 		return "", nil, "", false, false
 	}

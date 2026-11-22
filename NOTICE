@@ -36,6 +36,27 @@ golang.org/x/crypto, golang.org/x/net,
 golang.org/x/sys, golang.org/x/text           BSD 3-Clause
 
 ------------------------------------------------------------------------------
+Forked Source In This Repository
+------------------------------------------------------------------------------
+
+The components above are module dependencies, fetched at build time. Two
+packages are instead forked copies that live in this tree:
+
+pkg/ldap        Forked from github.com/nmcclain/ldap. BSD 3-Clause,
+                Copyright (c) 2012 The Go Authors; see pkg/ldap/LICENSE.
+                Modified for flamingo -- SASL/NTLM bind support among other
+                changes; see pkg/ldap/README.md, where every change is also
+                marked with a "flamingo change" comment in the source.
+
+pkg/asn1-ber    Forked from github.com/go-asn1-ber/asn1-ber, the BER decoder
+                the LDAP package depends on. BSD 3-Clause under the same Go
+                Authors terms; see pkg/asn1-ber/LICENSE.
+
+Both forks predate this work. The relay branch changed pkg/asn1-ber only to
+accept zero-length BER values (an LDAP bind with an empty password was being
+dropped) and pkg/ldap only to add the SASL bind path noted above.
+
+------------------------------------------------------------------------------
 Protocol Implementations
 ------------------------------------------------------------------------------
 

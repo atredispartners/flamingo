@@ -163,7 +163,10 @@ func (s *adwsServer) Start(results chan<- relay.AuthResult) error {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
-				return
+				if acceptFailed(s.done, "adws", err) {
+					return
+				}
+				continue
 			}
 			go s.handleConnection(conn)
 		}
@@ -209,6 +212,15 @@ func (s *adwsServer) handleConnection(conn net.Conn) {
 		Type2Ch:    make(chan []byte, 1),
 		Type3Ch:    make(chan []byte, 1),
 		ResultCh:   make(chan bool, 1),
+	}
+	// Let shutdown win before offering the exchange: results is buffered, so
+	// after Stop a send can still land in free buffer space that nobody will
+	// ever read, leaving this handler parked on Type2Ch forever. See the same
+	// guard in the MSRPC server for the full reasoning.
+	select {
+	case <-s.done:
+		return
+	default:
 	}
 	select {
 	case s.results <- auth:

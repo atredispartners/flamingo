@@ -30,10 +30,14 @@ type poisonParameters struct {
 var poisonParams = &poisonParameters{}
 
 func init() {
-	// Name poisoning is active, not passive: these listeners make hosts
-	// connect to flamingo, so they are opt-in and OFF by default. Enable them
-	// explicitly and only inside an authorized engagement scope, e.g.
-	//   flamingo --protocols llmnr,nbtns,mdns,smb
+	// Name poisoning is active, not passive: answering is what makes hosts
+	// connect to flamingo. The line is drawn by reach, not by listener. These
+	// listeners are in the default --protocols list: they log every query and
+	// answer the ones addressed directly to this host, like any other
+	// listener. Answering a query multicast or broadcast to the segment
+	// reaches hosts that were never talking to flamingo, so that half is
+	// opt-in behind --poison-broadcast and belongs inside an authorized
+	// engagement scope.
 	rootCmd.Flags().StringVarP(&poisonParams.LLMNRPorts, "llmnr-ports", "", "5355", "The list of UDP ports to listen on for LLMNR. Broadcast answering needs --poison-broadcast")
 	rootCmd.Flags().StringVarP(&poisonParams.NBTNSPorts, "nbtns-ports", "", "137", "The list of UDP ports to listen on for NBT-NS. Broadcast answering needs --poison-broadcast")
 	rootCmd.Flags().StringVarP(&poisonParams.MDNSPorts, "mdns-ports", "", "5353", "The list of UDP ports to listen on for mDNS. Broadcast answering needs --poison-broadcast")

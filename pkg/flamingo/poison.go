@@ -414,12 +414,30 @@ func classifyDNSQuery(data []byte) (qtype string, wantV6 bool, ok bool) {
 	if len(data) < 4 {
 		return "", false, false
 	}
-	switch {
-	case bytes.Equal(data[len(data)-4:], []byte{0x00, 0x01, 0x00, 0x01}):
+	return classifyDNSQueryAt(data, len(data)-4)
+}
+
+// classifyDNSQueryAt reads the QTYPE/QCLASS pair at a known offset -- the one
+// parseLabelNameEnd reports -- rather than assuming the question is the last
+// thing in the datagram.
+//
+// The QCLASS comparison masks off the top bit: mDNS reuses it as the unicast
+// -response bit (QU, RFC 6762 §5.4), so a QU query arrives with QCLASS 0x8001
+// and would otherwise look like an unknown class and go unanswered.
+func classifyDNSQueryAt(data []byte, off int) (qtype string, wantV6 bool, ok bool) {
+	if off < 0 || off+4 > len(data) {
+		return "", false, false
+	}
+	qclass := uint16(data[off+2])<<8 | uint16(data[off+3])
+	if qclass&0x7fff != 0x0001 {
+		return "", false, false
+	}
+	switch uint16(data[off])<<8 | uint16(data[off+1]) {
+	case 0x0001:
 		return "A", false, true
-	case bytes.Equal(data[len(data)-4:], []byte{0x00, 0xff, 0x00, 0x01}):
+	case 0x00ff:
 		return "ANY", false, true
-	case bytes.Equal(data[len(data)-4:], []byte{0x00, 0x1c, 0x00, 0x01}):
+	case 0x001c:
 		return "AAAA", true, true
 	}
 	return "", false, false
@@ -428,24 +446,43 @@ func classifyDNSQuery(data []byte) (qtype string, wantV6 bool, ok bool) {
 // parseLabelName reads a length-prefixed DNS label chain starting at offset and
 // returns the dotted name. It stops at a zero length byte or the end of data.
 func parseLabelName(data []byte, offset int) (string, bool) {
+	name, _, ok := parseLabelNameEnd(data, offset)
+	return name, ok
+}
+
+// parseLabelNameEnd is parseLabelName plus the offset just past the QNAME's
+// terminating null label, which is where that question's QTYPE and QCLASS
+// begin. Callers need it because a query may carry more than one question, or
+// known-answer records after the questions -- both routine for real mDNS
+// clients -- so neither the name nor the QTYPE can be found by slicing from
+// the end of the datagram.
+func parseLabelNameEnd(data []byte, offset int) (string, int, bool) {
 	var labels []string
 	i := offset
+	terminated := false
 	for i < len(data) {
 		l := int(data[i])
 		i++
 		if l == 0 {
+			terminated = true
 			break
 		}
+		// A label length with the top two bits set is a compression pointer.
+		// Questions are not compressed, and following one here would let a
+		// crafted datagram steer the parse, so stop instead.
+		if l&0xc0 != 0 {
+			return "", 0, false
+		}
 		if i+l > len(data) {
-			return "", false
+			return "", 0, false
 		}
 		labels = append(labels, string(data[i:i+l]))
 		i += l
 	}
-	if len(labels) == 0 {
-		return "", false
+	if len(labels) == 0 || !terminated {
+		return "", 0, false
 	}
-	return strings.Join(labels, "."), true
+	return strings.Join(labels, "."), i, true
 }
 
 // usableMulticastIface reports whether an interface can carry multicast joins.

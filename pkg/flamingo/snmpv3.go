@@ -499,7 +499,12 @@ func berNext(b []byte, off int) (berElement, error) {
 		}
 		off += n
 	}
-	if length < 0 || off+length > len(b) {
+	// Compare against the bytes remaining rather than forming off+length:
+	// a long-form length may be up to 0x7fffffff, and off+length overflows a
+	// 32-bit int to a negative number, which would slip past this guard and
+	// panic on the slice below. len(b)-off cannot be negative here, since
+	// every path above leaves off <= len(b).
+	if length < 0 || length > len(b)-off {
 		return e, errors.New("ber: length past end of buffer")
 	}
 
