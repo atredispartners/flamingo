@@ -22,8 +22,8 @@ import (
 // of the AUTH3 that follows. Everything past that — the credential itself —
 // is flamingo's NTLM core, through NTLMCapture.
 //
-// gopacket's relay.NewRPCRelayServer covers the same protocol, and the rest of
-// this phase is built on upstream's listeners, but this one is not:
+// gopacket's relay.NewRPCRelayServer covers the same protocol, and this
+// listener was built on it to begin with. It is not any more:
 // relay.extractNTLMType3Info (client.go:544) bounds-checks an NTLM security
 // buffer with int arithmetic and then slices with the raw uint32, so where int
 // is 32 bits an offset near 2^32 converts to a negative number, passes the

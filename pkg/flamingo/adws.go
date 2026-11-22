@@ -23,13 +23,14 @@ import (
 // handshake is refused, so an ADWS client gets no further than the logon it
 // has already given up.
 //
-// gopacket's relay.NewWCFRelayServer covers the same protocol, and the rest of
-// this phase is built on upstream's listeners, but this one is not: upstream
+// gopacket's relay.NewWCFRelayServer covers the same protocol, and this
+// listener was never built on it: upstream
 // indexes the first byte of a handshake blob without checking its length
 // (wcf_server.go:232 and again at the Type3 blob), so a five-byte message from
 // any unauthenticated peer panics the handler goroutine and takes the whole
 // process down with it. The protocol is small enough to own, so flamingo owns
-// it. Swapping back is a one-line change in SpawnADWS if upstream fixes it.
+// it. Flamingo's SMB, MSRPC and WinRM listeners are its own for the same
+// reason: nothing hands an unauthenticated peer's bytes to that library.
 type ConfADWS struct {
 	BindPort     uint16
 	BindHost     string
