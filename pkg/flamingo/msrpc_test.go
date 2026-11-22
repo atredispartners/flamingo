@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 // The MSRPC tests drive the listener over a real socket with hand-built
@@ -21,6 +22,7 @@ import (
 // implementation so a renamed constant cannot quietly make a test vacuous.
 const (
 	rpcTestPktRequest    = 0
+	rpcTestPktResponse   = 2
 	rpcTestPktFault      = 3
 	rpcTestPktBind       = 11
 	rpcTestPktBindAck    = 12
@@ -51,6 +53,24 @@ var rpcTestObjectExporter = []byte{
 	0xc4, 0xfe, 0xfc, 0x99, 0x60, 0x52, 0x1b, 0x10,
 	0xbb, 0xcb, 0x00, 0xaa, 0x00, 0x21, 0x34, 0x7a,
 	0x00, 0x00, 0x00, 0x00,
+}
+
+// rpcTestObjectExporterBE is the same interface marshalled the way a
+// big-endian client marshals a UUID: the first three fields swapped, the
+// clock sequence and node bytes as they are.
+var rpcTestObjectExporterBE = []byte{
+	0x99, 0xfc, 0xfe, 0xc4, 0x52, 0x60, 0x10, 0x1b,
+	0xbb, 0xcb, 0x00, 0xaa, 0x00, 0x21, 0x34, 0x7a,
+	0x00, 0x00, 0x00, 0x00,
+}
+
+// rpcTestEndpointMapper is the endpoint mapper interface,
+// e1af8308-5d1f-11c9-91a4-08002b14a0fa version 3, which is a different
+// interface on the same port: opnum 5 on it is not ServerAlive2.
+var rpcTestEndpointMapper = []byte{
+	0x08, 0x83, 0xaf, 0xe1, 0x1f, 0x5d, 0xc9, 0x11,
+	0x91, 0xa4, 0x08, 0x00, 0x2b, 0x14, 0xa0, 0xfa,
+	0x03, 0x00, 0x00, 0x00,
 }
 
 // msrpcTestServer spawns an MSRPC collector on a free port and returns the
@@ -190,6 +210,14 @@ func rpcTestVerifier(t *testing.T, pdu []byte, bo binary.ByteOrder) []byte {
 // BIND_ACK or ALTER_CONTEXT_RESP body.
 func rpcTestAckResults(t *testing.T, pdu []byte, bo binary.ByteOrder) [][]byte {
 	t.Helper()
+	out, _ := rpcTestAckResultsEnd(t, pdu, bo)
+	return out
+}
+
+// rpcTestAckResultsEnd is rpcTestAckResults plus the offset the result list
+// ends at, which is where a sec_trailer would begin if there were one.
+func rpcTestAckResultsEnd(t *testing.T, pdu []byte, bo binary.ByteOrder) ([][]byte, int) {
+	t.Helper()
 	// max_xmit(2) + max_recv(2) + assoc_group(4), then port_any_t.
 	off := 16 + 8
 	if off+2 > len(pdu) {
@@ -213,14 +241,161 @@ func rpcTestAckResults(t *testing.T, pdu []byte, bo binary.ByteOrder) [][]byte {
 		out = append(out, pdu[off:off+24])
 		off += 24
 	}
-	return out
+	return out, off
+}
+
+// rpcTestRequestBody builds a REQUEST body: alloc_hint, p_cont_id, opnum and
+// an empty stub, which is all ServerAlive2 takes.
+func rpcTestRequestBody(bo binary.ByteOrder, ctxID, opnum uint16) []byte {
+	body := make([]byte, 8)
+	bo.PutUint32(body[0:], 0) // alloc_hint
+	bo.PutUint16(body[4:], ctxID)
+	bo.PutUint16(body[6:], opnum)
+	return body
+}
+
+// rpcTestServerAlive2 is the ServerAlive2 reply as a client unmarshals it.
+type rpcTestServerAlive2 struct {
+	major, minor uint16
+	referent     uint32
+	maxCount     uint32
+	numEntries   uint16
+	secOffset    uint16
+	array        []uint16
+	reserved     uint32
+	status       uint32
+}
+
+// rpcTestParseServerAlive2 unmarshals a RESPONSE the way a DCOM client does:
+// the NDR stub of
+//
+//	[out, ref] COMVERSION*, [out, ref] DUALSTRINGARRAY**, [out, ref] DWORD*
+//
+// followed by the return value. Every length it is told is checked against the
+// stub it actually received, because a reply a client cannot parse is a client
+// that never comes back to authenticate.
+func rpcTestParseServerAlive2(t *testing.T, pdu []byte, bo binary.ByteOrder) rpcTestServerAlive2 {
+	t.Helper()
+	if pdu[2] != rpcTestPktResponse {
+		t.Fatalf("reply is packet type %d, want RESPONSE", pdu[2])
+	}
+	// alloc_hint(4) + p_cont_id(2) + cancel_count(1) + reserved(1).
+	if len(pdu) < 24 {
+		t.Fatalf("RESPONSE is %d bytes, too short for a body", len(pdu))
+	}
+	stub := pdu[24:]
+	if hint := bo.Uint32(pdu[16:20]); hint != uint32(len(stub)) {
+		t.Errorf("alloc_hint is %d, want the %d byte stub", hint, len(stub))
+	}
+	if pdu[22] != 0 {
+		t.Errorf("cancel_count is %d, want 0", pdu[22])
+	}
+
+	var sa rpcTestServerAlive2
+	if len(stub) < 16 {
+		t.Fatalf("the stub is %d bytes, too short for a DUALSTRINGARRAY header", len(stub))
+	}
+	sa.major = bo.Uint16(stub[0:2])
+	sa.minor = bo.Uint16(stub[2:4])
+	sa.referent = bo.Uint32(stub[4:8])
+	sa.maxCount = bo.Uint32(stub[8:12])
+	sa.numEntries = bo.Uint16(stub[12:14])
+	sa.secOffset = bo.Uint16(stub[14:16])
+
+	n := int(sa.numEntries)
+	if 16+2*n > len(stub) {
+		t.Fatalf("wNumEntries %d runs past the %d byte stub", n, len(stub))
+	}
+	for i := 0; i < n; i++ {
+		sa.array = append(sa.array, bo.Uint16(stub[16+2*i:18+2*i]))
+	}
+
+	off := 16 + 2*n
+	for off%4 != 0 {
+		off++
+	}
+	if off+8 > len(stub) {
+		t.Fatalf("pReserved and the return value run past the %d byte stub", len(stub))
+	}
+	sa.reserved = bo.Uint32(stub[off : off+4])
+	sa.status = bo.Uint32(stub[off+4 : off+8])
+	return sa
+}
+
+// rpcTestCheckServerAlive2 checks the reply field by field, including walking
+// the DUALSTRINGARRAY's two sections the way MS-DCOM 2.2.19.1 lays them out.
+func rpcTestCheckServerAlive2(t *testing.T, sa rpcTestServerAlive2) {
+	t.Helper()
+	if sa.major != 5 || sa.minor != 7 {
+		t.Errorf("COMVERSION is %d.%d, want 5.7", sa.major, sa.minor)
+	}
+	if sa.referent == 0 {
+		t.Error("ppdsaOrBindings is a null referent, so there are no bindings at all")
+	}
+	if sa.maxCount != uint32(sa.numEntries) {
+		t.Errorf("the conformant max_count is %d but wNumEntries is %d", sa.maxCount, sa.numEntries)
+	}
+	if int(sa.secOffset) >= len(sa.array) {
+		t.Fatalf("wSecurityOffset %d is outside a %d entry aStringArray", sa.secOffset, len(sa.array))
+	}
+
+	// The string bindings: one STRINGBINDING, then the section terminator.
+	strs := sa.array[:sa.secOffset]
+	if len(strs) < 3 {
+		t.Fatalf("the STRINGBINDING section is %d entries", len(strs))
+	}
+	if strs[0] != 7 {
+		t.Errorf("wTowerId is %d, want 7 for ncacn_ip_tcp", strs[0])
+	}
+	if strs[len(strs)-1] != 0 {
+		t.Error("the STRINGBINDING section is not null terminated")
+	}
+	if strs[len(strs)-2] != 0 {
+		t.Error("aNetworkAddr is not null terminated")
+	}
+	if addr := string(utf16.Decode(strs[1 : len(strs)-2])); addr != NTLMConf.NetBIOSComputerName {
+		t.Errorf("aNetworkAddr is %q, want the configured %q", addr, NTLMConf.NetBIOSComputerName)
+	}
+
+	// The security bindings: wAuthnSvc, Reserved, an empty principal name,
+	// then the section terminator.
+	sec := sa.array[sa.secOffset:]
+	if len(sec) < 4 {
+		t.Fatalf("the SECURITYBINDING section is %d entries", len(sec))
+	}
+	if sec[0] != 10 {
+		t.Errorf("wAuthnSvc is %d, want 10 for NTLMSSP", sec[0])
+	}
+	if sec[1] != 0xffff {
+		t.Errorf("the SECURITYBINDING Reserved field is 0x%04x, want 0xffff", sec[1])
+	}
+	if sec[2] != 0 {
+		t.Errorf("aPrincName starts with 0x%04x, want an empty string", sec[2])
+	}
+	if sec[len(sec)-1] != 0 {
+		t.Error("the SECURITYBINDING section is not null terminated")
+	}
+
+	if sa.reserved != 0 {
+		t.Errorf("pReserved is %d, want 0", sa.reserved)
+	}
+	if sa.status != 0 {
+		t.Errorf("ServerAlive2 returned 0x%08x, want S_OK", sa.status)
+	}
 }
 
 // msrpcTestBindChallenge sends a BIND carrying an NTLMSSP NEGOTIATE and
 // returns the CHALLENGE out of the BIND_ACK.
 func msrpcTestBindChallenge(t *testing.T, conn net.Conn) []byte {
 	t.Helper()
-	bind := rpcTestLE(rpcTestPktBind, 1, rpcTestBindBody(rpcTestObjectExporter), captureTestNegotiate())
+	return msrpcTestBindChallengeID(t, conn, 1)
+}
+
+// msrpcTestBindChallengeID is msrpcTestBindChallenge with the call identifier
+// spelled out, for the tests that run more than one call on a connection.
+func msrpcTestBindChallengeID(t *testing.T, conn net.Conn, callID uint32) []byte {
+	t.Helper()
+	bind := rpcTestLE(rpcTestPktBind, callID, rpcTestBindBody(rpcTestObjectExporter), captureTestNegotiate())
 	if _, err := conn.Write(bind); err != nil {
 		t.Fatalf("sending BIND: %s", err)
 	}
@@ -464,31 +639,179 @@ func TestMSRPCBigEndianDrep(t *testing.T) {
 	}
 }
 
-// TestMSRPCBindWithoutAuth checks a bind that carries no authentication
-// verifier is refused with a BIND_NAK rather than left open. flamingo carries
-// no calls, so an unauthenticated association is of no use to either side.
-func TestMSRPCBindWithoutAuth(t *testing.T) {
+// TestMSRPCProbeThenAuthenticate is the flow this listener exists to survive.
+// A Windows DCOM client that resolved a poisoned name to flamingo binds
+// without authentication, pings IObjectExporter::ServerAlive2, and only then
+// binds again with an NTLMSSP NEGOTIATE. All of it happens on one connection,
+// and a refusal anywhere along the way costs the credential at the end.
+func TestMSRPCProbeThenAuthenticate(t *testing.T) {
 	addr, got, _ := msrpcTestServer(t)
 	conn := msrpcTestDial(t, addr)
 
+	// The unauthenticated bind, which must be acked rather than naked.
 	bind := rpcTestLE(rpcTestPktBind, 7, rpcTestBindBody(rpcTestObjectExporter), nil)
 	if _, err := conn.Write(bind); err != nil {
-		t.Fatalf("sending BIND: %s", err)
+		t.Fatalf("sending the unauthenticated BIND: %s", err)
 	}
-	nak := rpcTestRecv(t, conn, binary.LittleEndian)
-	if nak[2] != rpcTestPktBindNak {
-		t.Fatalf("reply is packet type %d, want BIND_NAK", nak[2])
+	ack := rpcTestRecv(t, conn, binary.LittleEndian)
+	if ack[2] != rpcTestPktBindAck {
+		t.Fatalf("reply is packet type %d, want BIND_ACK", ack[2])
 	}
-	if binary.LittleEndian.Uint32(nak[12:16]) != 7 {
-		t.Errorf("BIND_NAK call_id is %d, want the request's 7", binary.LittleEndian.Uint32(nak[12:16]))
+	if n := binary.LittleEndian.Uint16(ack[10:12]); n != 0 {
+		t.Errorf("BIND_ACK auth_length is %d, want 0 on a bind that carried no verifier", n)
+	}
+	if id := binary.LittleEndian.Uint32(ack[12:16]); id != 7 {
+		t.Errorf("BIND_ACK call_id is %d, want the request's 7", id)
+	}
+	results, end := rpcTestAckResultsEnd(t, ack, binary.LittleEndian)
+	if len(results) != 1 {
+		t.Fatalf("BIND_ACK carries %d context results, want 1", len(results))
+	}
+	if r := binary.LittleEndian.Uint16(results[0][0:2]); r != rpcTestContextAccept {
+		t.Errorf("context result is %d, want acceptance", r)
+	}
+	if !bytes.Equal(results[0][4:24], rpcTestNDR20) {
+		t.Errorf("accepted transfer syntax is %x, want NDR 2.0", results[0][4:24])
+	}
+	if end != len(ack) {
+		t.Errorf("the BIND_ACK body ends at %d of %d bytes, so something follows the "+
+			"result list where there should be no sec_trailer", end, len(ack))
 	}
 
-	select {
-	case rec := <-got:
-		t.Errorf("an unauthenticated bind produced a credential: %v", rec)
-	case <-time.After(100 * time.Millisecond):
+	// The ping. A client that is not answered here never authenticates.
+	req := rpcTestLE(rpcTestPktRequest, 8, rpcTestRequestBody(binary.LittleEndian, 0, 5), nil)
+	if _, err := conn.Write(req); err != nil {
+		t.Fatalf("sending the ServerAlive2 REQUEST: %s", err)
 	}
-	msrpcTestProbe(t, addr)
+	resp := rpcTestRecv(t, conn, binary.LittleEndian)
+	if id := binary.LittleEndian.Uint32(resp[12:16]); id != 8 {
+		t.Errorf("RESPONSE call_id is %d, want the request's 8", id)
+	}
+	if id := binary.LittleEndian.Uint16(resp[20:22]); id != 0 {
+		t.Errorf("RESPONSE p_cont_id is %d, want the request's 0", id)
+	}
+	rpcTestCheckServerAlive2(t, rpcTestParseServerAlive2(t, resp, binary.LittleEndian))
+
+	// Satisfied, the client binds again and this time offers a credential.
+	challenge := msrpcTestBindChallengeID(t, conn, 9)
+	if want := "1122334455667788"; hex.EncodeToString(challenge[24:32]) != want {
+		t.Fatalf("CHALLENGE carries %x, want %s", challenge[24:32], want)
+	}
+
+	msg, proof, blob := captureTestV2Auth(t, challenge, "probe", "CORP", "WS15", "Winter2025!")
+	if _, err := conn.Write(rpcTestLE(rpcTestPktAuth3, 9, []byte{0, 0, 0, 0}, msg)); err != nil {
+		t.Fatalf("sending AUTH3: %s", err)
+	}
+
+	rec := captureTestRecord(t, got)
+	want := fmt.Sprintf("probe::CORP:%s:%s:%s", hex.EncodeToString(NTLMConf.Challenge[:]),
+		hex.EncodeToString(proof), hex.EncodeToString(blob))
+	if rec["hashcat"] != want {
+		t.Errorf("hashcat line is %q, want %q", rec["hashcat"], want)
+	}
+	if rec["hashcat_mode"] != "5600" {
+		t.Errorf("hashcat_mode is %q, want 5600", rec["hashcat_mode"])
+	}
+}
+
+// TestMSRPCServerAlive2BigEndian runs the same probe with the data
+// representation naming big-endian integers, so the whole NDR stub has to be
+// marshalled the other way round.
+func TestMSRPCServerAlive2BigEndian(t *testing.T) {
+	addr, _, _ := msrpcTestServer(t)
+	conn := msrpcTestDial(t, addr)
+
+	bind := rpcTestPDU(binary.BigEndian, rpcTestPktBind, 0x0a0b0c0d,
+		rpcTestBindBody(rpcTestObjectExporterBE), nil)
+	if _, err := conn.Write(bind); err != nil {
+		t.Fatalf("sending the unauthenticated BIND: %s", err)
+	}
+	ack := rpcTestRecv(t, conn, binary.BigEndian)
+	if ack[2] != rpcTestPktBindAck {
+		t.Fatalf("reply is packet type %d, want BIND_ACK", ack[2])
+	}
+	if n := binary.BigEndian.Uint16(ack[10:12]); n != 0 {
+		t.Errorf("BIND_ACK auth_length is %d, want 0", n)
+	}
+
+	req := rpcTestPDU(binary.BigEndian, rpcTestPktRequest, 0x0a0b0c0e,
+		rpcTestRequestBody(binary.BigEndian, 0, 5), nil)
+	if _, err := conn.Write(req); err != nil {
+		t.Fatalf("sending the ServerAlive2 REQUEST: %s", err)
+	}
+	resp := rpcTestRecv(t, conn, binary.BigEndian)
+	if resp[4] != rpcTestDrepBig {
+		t.Errorf("reply drep is 0x%02x, want the request's big-endian 0x00", resp[4])
+	}
+	// A little-endian reader would see a wildly different fragment length,
+	// which is the whole point of honouring drep.
+	if binary.LittleEndian.Uint16(resp[8:10]) == uint16(len(resp)) {
+		t.Error("the reply fragment length was written little-endian")
+	}
+	rpcTestCheckServerAlive2(t, rpcTestParseServerAlive2(t, resp, binary.BigEndian))
+}
+
+// TestMSRPCServerAlive2WithoutBind checks a call on an association that never
+// bound is faulted — and that the fault does not cost the connection, which is
+// the whole point: the client is still free to authenticate on it.
+func TestMSRPCServerAlive2WithoutBind(t *testing.T) {
+	addr, got, _ := msrpcTestServer(t)
+	conn := msrpcTestDial(t, addr)
+
+	req := rpcTestLE(rpcTestPktRequest, 3, rpcTestRequestBody(binary.LittleEndian, 0, 5), nil)
+	if _, err := conn.Write(req); err != nil {
+		t.Fatalf("sending the ServerAlive2 REQUEST: %s", err)
+	}
+	fault := rpcTestRecv(t, conn, binary.LittleEndian)
+	if fault[2] != rpcTestPktFault {
+		t.Fatalf("reply is packet type %d, want FAULT", fault[2])
+	}
+	if id := binary.LittleEndian.Uint32(fault[12:16]); id != 3 {
+		t.Errorf("FAULT call_id is %d, want the request's 3", id)
+	}
+
+	challenge := msrpcTestBindChallengeID(t, conn, 4)
+	msg, _, _ := captureTestV2Auth(t, challenge, "after", "CORP", "WS16", "pass")
+	if _, err := conn.Write(rpcTestLE(rpcTestPktAuth3, 4, []byte{0, 0, 0, 0}, msg)); err != nil {
+		t.Fatalf("sending AUTH3: %s", err)
+	}
+	if rec := captureTestRecord(t, got); rec["username"] != "after" {
+		t.Errorf("username is %q, want after", rec["username"])
+	}
+}
+
+// TestMSRPCServerAlive2WrongInterface checks opnum 5 is only ServerAlive2 on
+// IObjectExporter. On another interface it is some other call entirely, so it
+// is faulted — and again the connection survives it.
+func TestMSRPCServerAlive2WrongInterface(t *testing.T) {
+	addr, got, _ := msrpcTestServer(t)
+	conn := msrpcTestDial(t, addr)
+
+	bind := rpcTestLE(rpcTestPktBind, 1, rpcTestBindBody(rpcTestEndpointMapper), nil)
+	if _, err := conn.Write(bind); err != nil {
+		t.Fatalf("sending the unauthenticated BIND: %s", err)
+	}
+	if ack := rpcTestRecv(t, conn, binary.LittleEndian); ack[2] != rpcTestPktBindAck {
+		t.Fatalf("reply is packet type %d, want BIND_ACK", ack[2])
+	}
+
+	req := rpcTestLE(rpcTestPktRequest, 2, rpcTestRequestBody(binary.LittleEndian, 0, 5), nil)
+	if _, err := conn.Write(req); err != nil {
+		t.Fatalf("sending the REQUEST: %s", err)
+	}
+	fault := rpcTestRecv(t, conn, binary.LittleEndian)
+	if fault[2] != rpcTestPktFault {
+		t.Fatalf("reply is packet type %d, want FAULT", fault[2])
+	}
+
+	challenge := msrpcTestBindChallengeID(t, conn, 3)
+	msg, _, _ := captureTestV2Auth(t, challenge, "epm", "CORP", "WS17", "pass")
+	if _, err := conn.Write(rpcTestLE(rpcTestPktAuth3, 3, []byte{0, 0, 0, 0}, msg)); err != nil {
+		t.Fatalf("sending AUTH3: %s", err)
+	}
+	if rec := captureTestRecord(t, got); rec["username"] != "epm" {
+		t.Errorf("username is %q, want epm", rec["username"])
+	}
 }
 
 // TestMSRPCUnsupportedAuthType checks a BIND carrying something other than
@@ -510,22 +833,57 @@ func TestMSRPCUnsupportedAuthType(t *testing.T) {
 	msrpcTestProbe(t, addr)
 }
 
-// TestMSRPCUnsupportedPacketType checks a PDU this listener does not carry is
-// faulted and the connection closed.
+// TestMSRPCUnsupportedPacketType checks a PDU type this listener does not
+// carry at all is faulted and the connection closed.
 func TestMSRPCUnsupportedPacketType(t *testing.T) {
 	addr, _, _ := msrpcTestServer(t)
 	conn := msrpcTestDial(t, addr)
 
-	req := make([]byte, 8)
-	binary.LittleEndian.PutUint16(req[6:], 5) // IObjectExporter::ServerAlive2
-	if _, err := conn.Write(rpcTestLE(rpcTestPktRequest, 8, req, nil)); err != nil {
-		t.Fatalf("sending REQUEST: %s", err)
+	if _, err := conn.Write(rpcTestLE(99, 8, make([]byte, 8), nil)); err != nil {
+		t.Fatalf("sending the PDU: %s", err)
 	}
 	resp := rpcTestRecv(t, conn, binary.LittleEndian)
 	if resp[2] != rpcTestPktFault {
 		t.Errorf("reply is packet type %d, want FAULT", resp[2])
 	}
+	if _, err := io.Copy(io.Discard, conn); err != nil {
+		t.Errorf("the connection was left open after an unknown PDU type: %s", err)
+	}
 	msrpcTestProbe(t, addr)
+}
+
+// TestMSRPCUnimplementedCall checks a call flamingo does not implement is
+// faulted without closing the connection, so a probe nobody thought of still
+// leaves the client free to authenticate.
+func TestMSRPCUnimplementedCall(t *testing.T) {
+	addr, got, _ := msrpcTestServer(t)
+	conn := msrpcTestDial(t, addr)
+
+	bind := rpcTestLE(rpcTestPktBind, 1, rpcTestBindBody(rpcTestObjectExporter), nil)
+	if _, err := conn.Write(bind); err != nil {
+		t.Fatalf("sending the unauthenticated BIND: %s", err)
+	}
+	if ack := rpcTestRecv(t, conn, binary.LittleEndian); ack[2] != rpcTestPktBindAck {
+		t.Fatalf("reply is packet type %d, want BIND_ACK", ack[2])
+	}
+
+	// ResolveOxid2, which flamingo has no OXIDs to answer with.
+	req := rpcTestLE(rpcTestPktRequest, 2, rpcTestRequestBody(binary.LittleEndian, 0, 4), nil)
+	if _, err := conn.Write(req); err != nil {
+		t.Fatalf("sending the REQUEST: %s", err)
+	}
+	if fault := rpcTestRecv(t, conn, binary.LittleEndian); fault[2] != rpcTestPktFault {
+		t.Fatalf("reply is packet type %d, want FAULT", fault[2])
+	}
+
+	challenge := msrpcTestBindChallengeID(t, conn, 3)
+	msg, _, _ := captureTestV2Auth(t, challenge, "oxid", "CORP", "WS18", "pass")
+	if _, err := conn.Write(rpcTestLE(rpcTestPktAuth3, 3, []byte{0, 0, 0, 0}, msg)); err != nil {
+		t.Fatalf("sending AUTH3: %s", err)
+	}
+	if rec := captureTestRecord(t, got); rec["username"] != "oxid" {
+		t.Errorf("username is %q, want oxid", rec["username"])
+	}
 }
 
 // msrpcTestWideSecBuf rewrites the security buffer at off so its offset sits
@@ -744,9 +1102,8 @@ func TestMSRPCPDULimit(t *testing.T) {
 	addr, _, _ := msrpcTestServer(t)
 	conn := msrpcTestDial(t, addr)
 
-	// A bind with no verifier is naked and closed, so send the one PDU type
-	// that keeps the loop going: repeated binds carrying a NEGOTIATE. The
-	// second is a protocol error, so the connection ends well inside the cap.
+	// Repeated binds carrying a NEGOTIATE: the second is a protocol error,
+	// so the connection ends well inside the cap however high it is set.
 	bind := rpcTestLE(rpcTestPktBind, 1, rpcTestBindBody(rpcTestObjectExporter), captureTestNegotiate())
 	for i := 0; i < msrpcMaxPDUs+4; i++ {
 		if _, err := conn.Write(bind); err != nil {
