@@ -177,6 +177,10 @@ func TestWinRMSCaptureNTLMv2(t *testing.T) {
 	conf.BindHost = "127.0.0.1"
 	conf.BindPort = captureTestPort(t)
 	conf.RecordWriter = rw
+	// WinRM over TLS uses flamingo's own certificate handling now, so the
+	// caller supplies the PEM rather than the listener generating its own.
+	conf.TLSCert, conf.TLSKey = rdpTestCert(t)
+	conf.TLSName = "localhost"
 	if err := SpawnWinRMS(conf); err != nil {
 		t.Fatalf("SpawnWinRMS failed: %s", err)
 	}
@@ -248,9 +252,6 @@ func TestWinRMMalformed(t *testing.T) {
 		{"unknown scheme", "GET /wsman HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer abcd\r\n\r\n"},
 		{"bad base64", "GET /wsman HTTP/1.1\r\nHost: x\r\nAuthorization: NTLM !!!!\r\n\r\n"},
 		{"short token", "GET /wsman HTTP/1.1\r\nHost: x\r\nAuthorization: NTLM QUJD\r\n\r\n"},
-		{"authenticate with no negotiate", "GET /wsman HTTP/1.1\r\nHost: x\r\nAuthorization: NTLM " +
-			base64.StdEncoding.EncodeToString(ntlmTestAuthMsg("ghost", "CORP", "WS", nil, make([]byte, 24), nil, 0)) +
-			"\r\n\r\n"},
 		{"challenge where a negotiate belongs", "GET /wsman HTTP/1.1\r\nHost: x\r\nAuthorization: NTLM " +
 			base64.StdEncoding.EncodeToString(NTLMChallengeMessage(0)) + "\r\n\r\n"},
 	}
@@ -268,10 +269,18 @@ func TestWinRMMalformed(t *testing.T) {
 		})
 	}
 
-	select {
-	case rec := <-got:
-		t.Errorf("malformed input produced a credential: %v", rec)
-	default:
+	// No credential may come out of any of that. Observations may: a request
+	// that probes /wsman without completing the exchange is still worth
+	// recording, and flamingo's HTTP collector logs it as an access.
+	for draining := true; draining; {
+		select {
+		case rec := <-got:
+			if rec["_type"] == "credential" {
+				t.Errorf("malformed input produced a credential: %v", rec)
+			}
+		default:
+			draining = false
+		}
 	}
 
 	// The listener still serves a real client.
@@ -282,7 +291,6 @@ func TestWinRMMalformed(t *testing.T) {
 // negotiate and then drop, rather than holding a goroutine for each.
 func TestWinRMDisconnectMidExchange(t *testing.T) {
 	addr, _, conf := winrmTestServer(t)
-	conf.capture.Timeout = 200 * time.Millisecond
 
 	settle(t, 0)
 	before := runtime.NumGoroutine()
@@ -331,6 +339,10 @@ func TestWinRMSShutdown(t *testing.T) {
 	conf.BindHost = "127.0.0.1"
 	conf.BindPort = captureTestPort(t)
 	conf.RecordWriter = rw
+	// WinRM over TLS uses flamingo's own certificate handling now, so the
+	// caller supplies the PEM rather than the listener generating its own.
+	conf.TLSCert, conf.TLSKey = rdpTestCert(t)
+	conf.TLSName = "localhost"
 	if err := SpawnWinRMS(conf); err != nil {
 		t.Fatalf("SpawnWinRMS failed: %s", err)
 	}
@@ -354,8 +366,8 @@ func TestWinRMSBadCertificate(t *testing.T) {
 	conf := NewConfWinRMS()
 	conf.BindHost = "127.0.0.1"
 	conf.BindPort = captureTestPort(t)
-	conf.TLSCertFile = "/nonexistent/flamingo-test.pem"
-	conf.TLSKeyFile = "/nonexistent/flamingo-test.key"
+	conf.TLSCert = "not a certificate"
+	conf.TLSKey = "not a key"
 	conf.RecordWriter = rw
 
 	if err := SpawnWinRMS(conf); err == nil {
@@ -379,5 +391,37 @@ func TestNewConfWinRM(t *testing.T) {
 	}
 	if confs.BindHost != "[::]" {
 		t.Errorf("default host is %q, want [::]", confs.BindHost)
+	}
+}
+
+// TestWinRMAuthenticateWithoutNegotiate covers an AUTHENTICATE that arrives
+// with no NEGOTIATE before it. Capture-only answers every NEGOTIATE with the
+// same fixed challenge, so such a response is still attributable to it and is
+// captured rather than discarded -- HTTP/1.0 and some proxy clients really do
+// split the exchange across connections. Under relay the challenge belongs to
+// one target and one exchange, which is the case the listener refuses to
+// dress up as crackable.
+func TestWinRMAuthenticateWithoutNegotiate(t *testing.T) {
+	addr, got, _ := winrmTestServer(t)
+
+	msg := ntlmTestAuthMsg("ghost", "CORP", "WS", nil, make([]byte, 24), nil, 0)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial failed: %s", err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprintf(conn, "GET /wsman HTTP/1.1\r\nHost: x\r\nAuthorization: NTLM %s\r\n\r\n",
+		base64.StdEncoding.EncodeToString(msg))
+	io.Copy(io.Discard, conn)
+
+	rec := captureTestRecord(t, got)
+	if rec["username"] != "ghost" || rec["domain"] != "CORP" {
+		t.Errorf("identity is %q/%q, want ghost/CORP", rec["username"], rec["domain"])
+	}
+	// The challenge in the line must be the one flamingo hands out, since
+	// that is the only one it ever would have sent.
+	if !strings.Contains(rec["hashcat"], hex.EncodeToString(NTLMConf.Challenge[:])) {
+		t.Errorf("hashcat line %q does not carry the configured challenge", rec["hashcat"])
 	}
 }

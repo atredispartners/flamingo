@@ -2,32 +2,42 @@ package flamingo
 
 import (
 	"errors"
-	"fmt"
 	"sync"
-
-	"github.com/mandiant/gopacket/pkg/relay"
-	log "github.com/sirupsen/logrus"
 )
 
 // ConfWinRM holds the configuration for a WinRM capture server.
 //
-// WinRM is NTLM over HTTP on /wsman, and that is exactly as far as this goes:
-// upstream's WinRM server is a thin wrapper over its HTTP server with no WSMan
-// SOAP parsing on the server side, so what is captured is the credential, not
-// a command shell. A client that authenticates and then tries to run something
-// gets nothing useful back, by which point the hash is already recorded.
+// WinRM is NTLM over HTTP on /wsman, so this listener is flamingo's own HTTP
+// collector bound to 5985 and relabelled. That is not a shortcut: it is what
+// the protocol is, and it means WinRM inherits the HTTP listener's NTLM
+// handling, its relay seam, and its bounds checking rather than carrying a
+// second implementation of the same exchange.
+//
+// What is captured is the credential, not a command shell. A client that
+// authenticates and then tries to run something gets nothing useful back, by
+// which point the hash is already recorded.
+//
+// This listener used to be built on gopacket's relay.NewWinRMRelayServer --
+// itself a thin wrapper over that project's HTTP server. It was moved off it
+// because that server parses attacker-supplied NTLM with arithmetic that
+// panics where int is 32 bits, which made WinRM unavailable on flamingo's 386
+// and arm builds. Owning the exchange removes that limitation.
 type ConfWinRM struct {
 	BindPort     uint16
 	BindHost     string
 	RecordWriter *RecordWriter
 
+	// TLS serves WinRM over HTTPS on 5986 instead of plain HTTP on 5985.
+	TLS     bool
+	TLSName string
+	TLSCert string
+	TLSKey  string
+
 	// Responder decides the challenge a victim is answered with and whether
-	// it is told the logon succeeded. Nil — the default — is capture only.
-	// A relay responder makes this listener forward to a target instead; it
-	// rides the same NTLMCapture seam as capture, so nothing else changes.
+	// it is told the logon succeeded. Nil -- the default -- is capture only.
 	Responder NTLMResponder
 
-	capture  *NTLMCapture
+	http     *ConfHTTP
 	shutdown bool
 	m        sync.Mutex
 }
@@ -37,6 +47,15 @@ func NewConfWinRM() *ConfWinRM {
 	return &ConfWinRM{
 		BindPort: 5985,
 		BindHost: "[::]",
+	}
+}
+
+// NewConfWinRMS creates a default configuration for WinRM over TLS.
+func NewConfWinRMS() *ConfWinRM {
+	return &ConfWinRM{
+		BindPort: 5986,
+		BindHost: "[::]",
+		TLS:      true,
 	}
 }
 
@@ -50,7 +69,7 @@ func (c *ConfWinRM) IsShutdown() bool {
 // Shutdown flags the service to shut down.
 func (c *ConfWinRM) Shutdown() {
 	c.m.Lock()
-	capture := c.capture
+	inner := c.http
 	if c.shutdown {
 		c.m.Unlock()
 		return
@@ -58,119 +77,45 @@ func (c *ConfWinRM) Shutdown() {
 	c.shutdown = true
 	c.m.Unlock()
 
-	if capture != nil {
-		capture.Stop()
+	if inner != nil {
+		inner.Shutdown()
 	}
 }
 
-// SpawnWinRM starts a logging WinRM server, normally on port 5985.
+// SpawnWinRM starts a WinRM capture server.
 func SpawnWinRM(c *ConfWinRM) error {
-	if !upstreamType3Safe {
-		return errUpstream32Bit("winrm")
-	}
-	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
-	capture := NewNTLMCapture("winrm", addr, c.RecordWriter)
-	capture.Responder = c.Responder
+	inner := NewConfHTTP()
+	inner.BindPort = c.BindPort
+	inner.BindHost = c.BindHost
+	inner.RecordWriter = c.RecordWriter
+	inner.AuthMode = "ntlm"
+	inner.ProtoName = "winrm"
+	inner.ChallengeAllMethods = true
+	inner.RefuseAuth = true
+	inner.tlsSuffix = "winrms"
+	inner.Responder = c.Responder
+	inner.TLS = c.TLS
+	inner.TLSName = c.TLSName
+	inner.TLSCert = c.TLSCert
+	inner.TLSKey = c.TLSKey
 
 	c.m.Lock()
 	if c.shutdown {
 		c.m.Unlock()
-		return errors.New("winrm is shut down")
+		return errWinRMShutdown
 	}
-	c.capture = capture
+	c.http = inner
 	c.m.Unlock()
 
-	// Each listener gets a Config of its own and never shares one: upstream
-	// writes relayed-session fields on it from concurrent handlers without a
-	// lock, so a shared Config is a data race.
-	if err := capture.Start(relay.NewWinRMRelayServer(addr, &relay.Config{})); err != nil {
-		return err
-	}
-	log.Debugf("winrm is listening on %s", addr)
-	return nil
+	return SpawnHTTP(inner)
 }
 
-// ConfWinRMS holds the configuration for a WinRM-over-TLS capture server.
-//
-// TLSCertFile and TLSKeyFile are paths because that is what upstream's HTTPS
-// server takes; left empty it generates a self-signed certificate of its own,
-// which is not the certificate flamingo's other TLS listeners present.
-type ConfWinRMS struct {
-	BindPort     uint16
-	BindHost     string
-	TLSCertFile  string
-	TLSKeyFile   string
-	RecordWriter *RecordWriter
-
-	// Responder decides the challenge a victim is answered with and whether
-	// it is told the logon succeeded. Nil — the default — is capture only.
-	// A relay responder makes this listener forward to a target instead; it
-	// rides the same NTLMCapture seam as capture, so nothing else changes.
-	Responder NTLMResponder
-
-	capture  *NTLMCapture
-	shutdown bool
-	m        sync.Mutex
+// SpawnWinRMS starts a WinRM capture server on TLS. It is SpawnWinRM with TLS
+// forced on, kept separate so the command line can start one of each.
+func SpawnWinRMS(c *ConfWinRM) error {
+	c.TLS = true
+	return SpawnWinRM(c)
 }
 
-// NewConfWinRMS creates a default configuration for the WinRM-over-TLS
-// capture server.
-func NewConfWinRMS() *ConfWinRMS {
-	return &ConfWinRMS{
-		BindPort: 5986,
-		BindHost: "[::]",
-	}
-}
-
-// IsShutdown checks to see if the service is shutting down.
-func (c *ConfWinRMS) IsShutdown() bool {
-	c.m.Lock()
-	defer c.m.Unlock()
-	return c.shutdown
-}
-
-// Shutdown flags the service to shut down.
-func (c *ConfWinRMS) Shutdown() {
-	c.m.Lock()
-	capture := c.capture
-	if c.shutdown {
-		c.m.Unlock()
-		return
-	}
-	c.shutdown = true
-	c.m.Unlock()
-
-	if capture != nil {
-		capture.Stop()
-	}
-}
-
-// SpawnWinRMS starts a logging WinRM-over-TLS server, normally on port 5986.
-func SpawnWinRMS(c *ConfWinRMS) error {
-	if !upstreamType3Safe {
-		return errUpstream32Bit("winrms")
-	}
-	addr := fmt.Sprintf("%s:%d", c.BindHost, c.BindPort)
-	capture := NewNTLMCapture("winrms", addr, c.RecordWriter)
-	capture.Responder = c.Responder
-
-	c.m.Lock()
-	if c.shutdown {
-		c.m.Unlock()
-		return errors.New("winrms is shut down")
-	}
-	c.capture = capture
-	c.m.Unlock()
-
-	// One Config per listener, never shared (see SpawnWinRM).
-	conf := &relay.Config{CertFile: c.TLSCertFile, KeyFile: c.TLSKeyFile}
-	server, err := relay.NewWinRMSRelayServer(addr, conf)
-	if err != nil {
-		return err
-	}
-	if err := capture.Start(server); err != nil {
-		return err
-	}
-	log.Debugf("winrms is listening on %s", addr)
-	return nil
-}
+// errWinRMShutdown is returned when a listener is started after shutdown.
+var errWinRMShutdown = errors.New("winrm is shut down")

@@ -292,12 +292,9 @@ func setupWinRMS(rw *flamingo.RecordWriter) {
 		conf.BindPort = port
 		conf.RecordWriter = rw
 		conf.Responder = relayResponder
-		// Upstream's HTTPS server loads a certificate from disk rather than
-		// from PEM data, so it can only use --tls-cert/--tls-key when they
-		// were given as paths. Otherwise it generates its own, and 5986
-		// presents a different certificate from flamingo's other TLS ports.
-		conf.TLSCertFile = params.TLSCertFile
-		conf.TLSKeyFile = params.TLSKeyFile
+		conf.TLSCert = params.TLSCertData
+		conf.TLSKey = params.TLSKeyData
+		conf.TLSName = params.TLSName
 		return conf.Shutdown, flamingo.SpawnWinRMS(conf)
 	})
 }

@@ -155,14 +155,23 @@ func captureTestResult(t *testing.T, a relay.AuthResult) bool {
 }
 
 // captureTestRecord waits for a captured credential.
+// captureTestRecord waits for the next credential. Observations are skipped:
+// the HTTP-backed listeners record an access for each un-authenticated step of
+// the exchange they are themselves driving, so a credential is not necessarily
+// the first record to arrive.
 func captureTestRecord(t *testing.T, got chan map[string]string) map[string]string {
 	t.Helper()
-	select {
-	case rec := <-got:
-		return rec
-	case <-time.After(5 * time.Second):
-		t.Fatal("no credential captured")
-		return nil
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case rec := <-got:
+			if rec["_type"] == "credential" {
+				return rec
+			}
+		case <-deadline:
+			t.Fatal("no credential captured")
+			return nil
+		}
 	}
 }
 

